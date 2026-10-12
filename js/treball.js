@@ -206,7 +206,6 @@ const distancia_recoger_queso = 0.9;
 var quesos = [];
 var quesos_recogidos = 0;
 var tiempo_hasta_queso = 1;
-var luces_queso = [];           // piscina de luces puntuales: una por queso posible
 var textura_halo = null;
 var textura_haz = null;         // degradado vertical para las columnas de luz de los escondites
 var material_queso = null;
@@ -363,7 +362,7 @@ function alternarModoLigero()
   var brillos = [];
   escondites.forEach(function(e) { brillos.push(e.halo, e.haz); });
   arboles.forEach(function(a) { brillos.push(a.halo, a.haz); });
-  quesos.forEach(function(q) { brillos.push(q.halo); });
+  quesos.forEach(function(q) { brillos.push(q.halo, q.charco); });
   brillos.forEach(function(b) { b.visible = !modo_ligero; });
 
   console.log(modo_ligero ? 'Modo ligero: sin sombras ni brillos' : 'Modo normal');
@@ -542,15 +541,15 @@ function init()
   luzDireccional.shadow.camera.far = 250;
   scene.add(luzDireccional);
 
-  // 6- quesos: luces puntuales (tema 4, luz puntual) creadas de antemano y apagadas.
-  // Si se anadieran y quitaran luces durante el juego, Three.js tendria que
-  // recompilar los materiales cada vez y la imagen daria un tiron.
-  for (var i = 0; i < max_quesos; i++) {
-    var luz = new THREE.PointLight(0xffcc33, 0, 5);   // color, intensidad, distancia
-    luz.position.set(0, -10, 0);
-    scene.add(luz);
-    luces_queso.push(luz);
-  }
+  // RENDIMIENTO- las dos luces tambien iluminan la capa 1 (la del minimapa), para que
+  // la fuente, las plataformas y el mobiliario no salgan negros en la vista de planta.
+  luzAmbiente.layers.enable(1);
+  luzDireccional.layers.enable(1);
+
+  // Nota: antes cada queso tenia una luz puntual (tema 4). En el modelo de Phong cada
+  // luz es un termino mas de la suma que se calcula en CADA pixel de cada material,
+  // asi que 10 luces multiplicaban el trabajo de toda la pantalla. Ahora el charco de
+  // luz se pinta en el suelo con un disco brillante (ver crearQueso).
 
   var aspectRatio = window.innerWidth / window.innerHeight;
   camera = new THREE.PerspectiveCamera(50, aspectRatio, 0.1, 1000);
@@ -567,6 +566,11 @@ function init()
     200
   );
   cameraTop.up.set(0, 0, -1);
+  // RENDIMIENTO- como el HUD del Tron (halo_hud.layers.set(1)), la vista de planta solo
+  // dibuja la capa 1: un suelo esquematico de color plano, las piezas que sirven para
+  // orientarse y los marcadores. Asi no se calcula el suelo con texturas, luces y
+  // sombras en cada pixel del minimapa.
+  cameraTop.layers.set(1);
 
   cameraControls = new THREE.OrbitControls(camera, renderer.domElement);
   cameraControls.target.set(0, 1, 0);
@@ -639,6 +643,22 @@ function loadScene()
     normalMap: normalesSuelo,
     shininess: 10
   });
+  // Suelo esquematico del minimapa (solo capa 1): material basico, sin luces ni sombras.
+  var sueloMapa = new THREE.Mesh(
+    new THREE.CircleGeometry(radio_plaza, 64),
+    new THREE.MeshBasicMaterial({ color: 0x77716a })
+  );
+  sueloMapa.rotation.x = -Math.PI / 2;
+  sueloMapa.layers.set(1);
+  scene.add(sueloMapa);
+  var aceraMapa = new THREE.Mesh(
+    new THREE.RingGeometry(radio_plaza, radio_acera, 64, 1),
+    new THREE.MeshBasicMaterial({ color: 0xb8b2a8 })
+  );
+  aceraMapa.rotation.x = -Math.PI / 2;
+  aceraMapa.layers.set(1);
+  scene.add(aceraMapa);
+
   var suelo = new THREE.Mesh(geometriaSuelo, materialSuelo);
   suelo.rotation.x = -Math.PI / 2;
   suelo.receiveShadow = true;
@@ -773,6 +793,11 @@ function loadScene()
   }
   objetosSuelo.push(grupo_plataformas);
 
+  // Lo que ayuda a orientarse tambien se dibuja en el minimapa (capa 1 ademas de la 0).
+  mostrarEnMapa(fuente);
+  mostrarEnMapa(grupo_plataformas);
+  mostrarEnMapa(obstaculos);
+
   // 4- colisiones de la rata, de las personas, de los gatos y de los perros.
   // La rata y los gatos pasan junto a los troncos (suben); personas y perros los rodean.
   // El mobiliario frena a todo el mundo. Las plataformas frenan a todos menos a los
@@ -801,7 +826,7 @@ function loadScene()
   compilarShaders();
   scene.remove(quesoPrueba.modelo);
   quitarMarcador(quesoPrueba.marcador);
-  if (quesoPrueba.luz !== null) quesoPrueba.luz.intensity = 0;
+  scene.remove(quesoPrueba.charco);
 
   // 2- rata
   loadRata();
@@ -1418,10 +1443,17 @@ function mallaMarcador(geometria, color, orden)
   return malla;
 }
 
+// Las capas no se heredan: hay que activarlas en cada malla del grupo.
+function mostrarEnMapa(objeto)
+{
+  objeto.traverse(function(hijo) { hijo.layers.enable(1); });
+}
+
 function anadirMarcador(marcador)
 {
   marcador.position.y = 3;
-  marcador.visible = false;   // solo se ve mientras se dibuja el minimapa
+  // Los marcadores solo estan en la capa 1: la camara principal no los ve nunca.
+  marcador.traverse(function(hijo) { hijo.layers.set(1); });
   scene.add(marcador);
   marcadores.push(marcador);
   return marcador;
@@ -1445,6 +1477,7 @@ function crearMarcadorRata()
   abanico.rotateX(Math.PI / 2);
   var malla = mallaMarcador(abanico, 0xffffff, 15);
   malla.material.opacity = 0.18;
+  malla.layers.set(1);
   marcador.add(malla);
   marcador.userData.abanico = malla;
   return marcador;
@@ -1542,7 +1575,7 @@ function distanciaQuesoMasCercano()
 }
 
 // Un queso es una cuna (prisma triangular: cilindro de 3 lados) con un halo
-// (sprite aditivo que siempre mira a la camara) y una luz puntual amarilla.
+// (sprite aditivo que siempre mira a la camara) y un charco de luz en el suelo.
 function crearQueso(x, z, alturaBase)
 {
   var queso = new THREE.Group();
@@ -1567,23 +1600,27 @@ function crearQueso(x, z, alturaBase)
   queso.position.set(x, alturaBase + 0.25, z);
   scene.add(queso);
 
-  // Luz puntual de la piscina: la primera que este apagada.
-  var luz = null;
-  for (var i = 0; i < luces_queso.length; i++) {
-    if (luces_queso[i].intensity === 0) {
-      luz = luces_queso[i];
-      break;
-    }
-  }
-  if (luz !== null) {
-    luz.position.set(x, alturaBase + 0.9, z);
-    luz.intensity = 1.2;
-  }
+  // Charco de luz: un plano tumbado en el suelo con la misma textura de degradado que
+  // el halo y mezcla aditiva. Da el efecto de una luz puntual sin calcular ninguna luz.
+  var charco = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.6, 2.6),
+    new THREE.MeshBasicMaterial({
+      map: textura_halo,
+      color: 0xffcc33,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  charco.rotation.x = -Math.PI / 2;
+  charco.position.set(x, alturaBase + 0.03, z);
+  charco.visible = !modo_ligero;
+  scene.add(charco);
 
   return {
     modelo: queso,
     halo: halo,
-    luz: luz,
+    charco: charco,
     altura_base: alturaBase,
     fase: Math.random() * Math.PI * 2,
     marcador: crearMarcadorQueso()
@@ -1644,8 +1681,8 @@ function actualizarQuesos(delta)
     // El halo late: cambia de tamano con la misma fase.
     var latido = 1.6 + 0.4 * Math.sin(queso.fase * 2);
     queso.halo.scale.set(latido, latido, 1);
-    if (queso.luz !== null)
-      queso.luz.intensity = 1.0 + 0.4 * Math.sin(queso.fase * 2);
+    var latidoCharco = 2.4 + 0.5 * Math.sin(queso.fase * 2);
+    queso.charco.scale.set(latidoCharco / 2.6, latidoCharco / 2.6, 1);
 
     // Recogida: distancia en el plano XZ entre la rata y el queso y misma altura
     // (un queso encima de un parterre no se coge desde abajo). No vale desde un escondite.
@@ -1653,9 +1690,8 @@ function actualizarQuesos(delta)
         distanciaXZ(queso.modelo.position, pos_rata.x, pos_rata.z) < distancia_recoger_queso &&
         Math.abs(pos_rata.y - queso.altura_base) < 0.5) {
       scene.remove(queso.modelo);
+      scene.remove(queso.charco);
       quitarMarcador(queso.marcador);
-      if (queso.luz !== null)
-        queso.luz.intensity = 0;
       quesos.splice(i, 1);
       quesos_recogidos++;
       // 10- cada queso alarga el tiempo limite.
@@ -2983,11 +3019,9 @@ function render()
   renderer.setScissorTest(true);
   renderer.setClearColor(new THREE.Color(0x202020));
   renderer.clear();
-  // Los marcadores de colores solo existen para esta vista.
+  // Los marcadores estan en la capa 1, que solo ve esta camara.
   actualizarMarcadores(radar);
-  for (var i = 0; i < marcadores.length; i++) marcadores[i].visible = true;
   renderer.render(scene, cameraTop);
-  for (var i = 0; i < marcadores.length; i++) marcadores[i].visible = false;
   renderer.setScissorTest(false);
 
   // Marco y leyenda del minimapa: solo se recolocan si cambia el tamano de la ventana.
