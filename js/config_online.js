@@ -8,5 +8,5 @@
  *
  * NUNCA pongas aqui la clave "service_role" o "secret": esa da acceso total.
  */
-var SUPABASE_URL = '';     // por ejemplo 'https://abcdefghijkl.supabase.co'
-var SUPABASE_CLAVE = '';   // por ejemplo 'sb_publishable_...' o 'eyJhbGciOi...'
+var SUPABASE_URL = 'https://sybcuurdssiimuycthha.supabase.co';
+var SUPABASE_CLAVE = 'sb_publishable_IY4y1MiQRuHvotfyIUTB0w_RS0E2owA';   // clave publica (publishable)
