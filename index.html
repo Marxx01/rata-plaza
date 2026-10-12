@@ -162,7 +162,7 @@
   <body>
     <!-- Contenedor de la aplicacion -->
     <div id="container"></div>
-    <div id="ayuda">WASD mover · Shift dash · Espacio saltar · M radar/mapa · C camara orbital · P pausa · L modo ligero</div>
+    <div id="ayuda">WASD o flechas mover · Shift dash · Espacio saltar · M radar/mapa · C camara orbital · P pausa · L modo ligero</div>
     <div id="marco_mapa"><div id="texto_mapa">RADAR (M cambia)</div></div>
     <div id="hud"><div id="marcador_quesos">Quesos: 0</div><div id="reloj">Tiempo: 20.0 s</div><span id="estado">Recoge los quesos. Escondete en las alcantarillas.</span><div id="energia"><div id="energia_barra"></div></div></div>
     <div id="fin">
@@ -179,6 +179,7 @@
         <h1>La rata de la plaza</h1>
         <p>Recoge quesos y que no te pillen gatos, perros ni personas.</p>
         <p>Tienes <b>20 segundos</b> desde que despiertan los animales; cada queso suma <b>5 segundos</b>.</p>
+        <p>Muevete con <b>WASD</b> o las <b>flechas</b>, <b>Shift</b> para correr y <b>Espacio</b> para saltar.</p>
         <form id="form_menu">
           <input id="nombre" maxlength="16" placeholder="Nombre de la partida" autocomplete="off">
           <button id="boton_empezar" type="submit" disabled>Cargando...</button>
@@ -200,9 +201,9 @@
     <script src="lib/stats.min.js"></script>
 
     <!-- Records online (Supabase). Si esta vacio, los records se guardan en el navegador -->
-    <script src="js/config_online.js?v=20261012130318"></script>
+    <script src="js/config_online.js?v=20261012131305"></script>
 
     <!-- Nuestro codigo -->
-    <script src="js/treball.js?v=20261012130318"></script>
+    <script src="js/treball.js?v=20261012131305"></script>
   </body>
 </html>
