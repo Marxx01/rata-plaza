@@ -74,7 +74,9 @@ let inclinacion_actual = 0;
 // FINAL- salto con cinematica basica (copiado del Tron). Aqui el suelo es plano,
 // asi que no hace falta el rayo vertical: el suelo esta siempre en y = 0.
 const gravedad = -18;
-const impulso_salto = 5.5;      // llega a unos 0.84 de alto: suficiente para las plataformas (0.5)
+// Altura maxima del salto = v^2 / (2 g): con 6.3 llega a 1.1, suficiente para las
+// plataformas (0.5) y para pasar por encima del lomo de gatos y perros (altura_lomo).
+const impulso_salto = 6.3;
 let velocidad_vertical = 0;
 let en_suelo = true;
 
@@ -245,6 +247,7 @@ const tipos_perseguidor = {
     radio_vision: 9,
     ancho: 0.2,            // media anchura del cuerpo (para los rayos laterales)
     alcance: 0.6,          // del centro al hocico (distancia a la que se para)
+    altura_lomo: 0.5,      // si los pies de la rata pasan de aqui, salta por encima (lomo real 0.57)
     sube_arboles: true,
     cantidad: 4,
     color_reserva: 0x444444
@@ -262,6 +265,7 @@ const tipos_perseguidor = {
     radio_vision: 12,
     ancho: 0.25,
     alcance: 0.75,
+    altura_lomo: 0.75,     // lomo real 0.88: algo menos para que el salto no sea imposible
     sube_arboles: false,
     cantidad: 4,
     color_reserva: 0xc08040
@@ -276,6 +280,8 @@ const segundos_aburrido = 5;       // sin volver a perseguir
 const segundos_parado_aburrido = 1.5;   // de esos, los primeros quieto
 var aviso_aburrido = 0;            // segundos que queda el mensaje en el HUD
 var texto_aburrido = '';
+var aviso_salto = 0;               // igual, para "has saltado por encima de un gato/perro"
+var texto_salto = '';
 const distancia_atrapar = 0.9;
 const segundos_de_gracia = 6;   // al empezar, los perseguidores tardan un poco en fijarse en la rata
 var perseguidores = [];
@@ -646,6 +652,60 @@ function crearSkybox()
   scene.add(skybox);
 }
 
+// TEXTURA FACHADAS- fachada con ventanas ("Facade 2" de ShareTextures, CC0) en la cara que
+// mira a la plaza (tema 5 y s5-texturas.js). Como cada edificio tiene un alto distinto,
+// cada uno necesita su propio repeat: clonamos la textura (clone() copia las propiedades
+// pero comparte la imagen, que se sube a la tarjeta grafica una sola vez).
+// Los clones se hacen dentro de la funcion que se llama al terminar la carga, como con el
+// GLTFLoader. Si la imagen no carga, los edificios se quedan con su color liso.
+function ponerTexturaFachadas(fachadas)
+{
+  var cargador = new THREE.TextureLoader();
+  // Tintes claros: el color del material se multiplica por el de la foto
+  // (diffuseColor del tema 4-5), asi una sola foto da edificios de colores distintos.
+  var tintes = [0xffffff, 0xffc8b0, 0xd6dae2, 0xfff0c0, 0xe6c2b4, 0xd0d8c8];
+
+  cargador.load('images/fachada_diff_1k.jpg', function (texturaFachada) {
+    cargador.load('images/fachada_nor_gl_1k.jpg', function (normalesFachada) {
+      texturaFachada.encoding = THREE.sRGBEncoding;    // es una foto en color, como el suelo
+      texturaFachada.wrapS = THREE.RepeatWrapping;
+      texturaFachada.wrapT = THREE.RepeatWrapping;
+      normalesFachada.wrapS = THREE.RepeatWrapping;
+      normalesFachada.wrapT = THREE.RepeatWrapping;
+      // Filtrado anisotropico (tema 5, diapositiva 20): las fachadas casi siempre se ven
+      // muy de lado y sin el las ventanas lejanas se emborronan.
+      texturaFachada.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      normalesFachada.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+      for (var i = 0; i < fachadas.children.length; i++) {
+        var fachada = fachadas.children[i];
+        var ancho = fachada.geometry.parameters.width;
+        var alto = fachada.geometry.parameters.height;
+
+        // Una copia de la foto a lo ancho (3 columnas de ventanas sin cortar) y a lo
+        // alto las que quepan sin deformarla: la foto es cuadrada.
+        var repeticionesAlto = alto / ancho;
+        // offset: desplaza la textura para que la cornisa (arriba de la foto) quede justo
+        // en el tejado y no a media altura del edificio.
+        var desplazamiento = Math.ceil(repeticionesAlto) - repeticionesAlto;
+
+        var mapa = texturaFachada.clone();
+        mapa.repeat.set(1, repeticionesAlto);
+        mapa.offset.set(0, desplazamiento);
+        var relieve = normalesFachada.clone();
+        relieve.repeat.set(1, repeticionesAlto);
+        relieve.offset.set(0, desplazamiento);
+
+        var frente = fachada.material[4];
+        frente.map = mapa;
+        frente.normalMap = relieve;      // relieve de marcos y repisas sin mas poligonos
+        frente.color.set(tintes[i % tintes.length]);
+        frente.needsUpdate = true;       // al anadir mapas el shader cambia y hay que recompilarlo
+      }
+    });
+  });
+}
+
 function loadScene()
 {
   // 1 - ESCENARIO
@@ -752,9 +812,16 @@ function loadScene()
     var altoFachada = 10 + (tramo * 7) % 11;     // alturas distintas pero siempre iguales
     var fondoFachada = 9;
 
+    // MATERIALES POR CARA- como el cubo de s5-texturas.js: un array de 6 materiales en el
+    // orden de BoxGeometry (+X, -X, +Y, -Y, +Z, -Z). Las paredes laterales y el tejado son
+    // de color liso; la cara +Z (indice 4), la que mira a la plaza despues del lookAt,
+    // recibe la foto de la fachada cuando termina de cargar (ponerTexturaFachadas).
+    var colorPared = coloresFachada[tramo % coloresFachada.length];
+    var materialPared = new THREE.MeshLambertMaterial({ color: colorPared });
+    var materialFrente = new THREE.MeshPhongMaterial({ color: colorPared, shininess: 5 });
     var fachada = new THREE.Mesh(
       new THREE.BoxGeometry(anchoFachada - 0.5, altoFachada, fondoFachada),
-      new THREE.MeshLambertMaterial({ color: coloresFachada[tramo % coloresFachada.length] })
+      [materialPared, materialPared, materialPared, materialPared, materialFrente, materialPared]
     );
     fachada.position.set(
       Math.cos(anguloFachada) * (radio_fachadas + fondoFachada / 2),
@@ -767,6 +834,7 @@ function loadScene()
     fachadas.add(fachada);
   }
   scene.add(fachadas);
+  ponerTexturaFachadas(fachadas);
 
   // Limite invisible de la plaza. Copiado del Tron: conservamos un cilindro
   // completo para las colisiones; el bordillo es la representacion visible.
@@ -1873,7 +1941,11 @@ function nuevoPerseguidor(tipo, modelo, anguloInicial, mixerAgente, acciones)
     frames_giro: 0,
     frames_hasta_cambio: 60,
     fase: 0,
-    colisionador: crearColisionador(0.5, 1),
+    // SALTO POR ENCIMA- el cilindro llega 0.3 por encima del lomo: los rayos de la rata
+    // salen a 0.3 de sus pies, asi que dejan de chocar justo cuando la rata ya esta mas
+    // alta que el lomo (rataPorEncima) y puede seguir avanzando por encima del animal.
+    alto_colisionador: tipo.altura_lomo + 0.3,
+    colisionador: crearColisionador(0.5, tipo.altura_lomo + 0.3),
     marcador: crearMarcador(color_marcador[tipo.nombre], 1.7),
     // Los gatos pasan junto a los troncos; los perros los rodean.
     lista_obstaculos: tipo.sube_arboles ? objectsToCheckGatos : objectsToCheckPerros,
@@ -1965,6 +2037,14 @@ function rataInalcanzable()
   return rataOculta() || rata_en_plataforma;
 }
 
+// SALTO POR ENCIMA- en pleno salto, la rata se libra del animal si sus pies estan mas
+// altos que el lomo (contando la altura a la que esta el animal, por si es un gato
+// subido a una plataforma).
+function rataPorEncima(agente)
+{
+  return !en_suelo && pos_rata.y - agente.modelo.position.y > agente.tipo.altura_lomo;
+}
+
 function actualizarPerseguidor(agente, delta)
 {
   var xAntes = agente.pos.x, zAntes = agente.pos.z;
@@ -2026,8 +2106,14 @@ function actualizarPerseguidor(agente, delta)
           distanciaXZ(arbol_actual.pos, agente.pos.x, agente.pos.z) < radio_arbol + 0.5)
         alturaModelo = altura_subida_gato;
 
-      if (distancia < distancia_atrapar)
-        terminarJuego('Te ha atrapado un ' + agente.tipo.nombre, agente);
+      if (distancia < distancia_atrapar) {
+        if (rataPorEncima(agente)) {
+          aviso_salto = 1.5;
+          texto_salto = '¡Has saltado por encima de un ' + agente.tipo.nombre + '!';
+        } else {
+          terminarJuego('Te ha atrapado un ' + agente.tipo.nombre, agente);
+        }
+      }
     }
   } else if (agente.estado === 'aburrido') {
     // Primero se queda quieto un momento; luego pasea, aunque vea a la rata.
@@ -2058,7 +2144,7 @@ function actualizarPerseguidor(agente, delta)
 
   agente.modelo.position.set(agente.pos.x, alturaModelo, agente.pos.z);
   agente.modelo.rotation.set(0, agente.angulo + agente.desfase, 0);
-  agente.colisionador.position.set(agente.pos.x, alturaModelo + 0.5, agente.pos.z);
+  agente.colisionador.position.set(agente.pos.x, alturaModelo + agente.alto_colisionador / 2, agente.pos.z);
 
   // Animacion: con modelo, clip de andar o correr; con primitivas, patas como pendulos.
   if (agente.mixer !== null) {
@@ -2770,7 +2856,7 @@ function animarMenu(delta)
       ? alturaSuelo(agente.pos.x, agente.pos.z, agente.modelo.position.y, altura_escalon_gato) : 0;
     agente.modelo.position.set(agente.pos.x, y, agente.pos.z);
     agente.modelo.rotation.set(0, agente.angulo + agente.desfase, 0);
-    agente.colisionador.position.set(agente.pos.x, y + 0.5, agente.pos.z);
+    agente.colisionador.position.set(agente.pos.x, y + agente.alto_colisionador / 2, agente.pos.z);
     if (agente.mixer !== null) agente.mixer.update(delta);
   }
 
@@ -2796,12 +2882,14 @@ function actualizarHUD()
     estado = 'En el arbol: el perro no llega... ¡pero el gato trepa! Gira con A/D para mirar';
   else if (rata_en_plataforma)
     estado = 'En alto: personas y perros no suben... ¡los gatos si!';
+  else if (aviso_salto > 0)
+    estado = texto_salto;
   else if (aviso_aburrido > 0 && perseguidorCerca === null)
     estado = texto_aburrido + '. ¡Aprovecha!';
   else if (perseguidorCerca === 'perro')
-    estado = '¡Un perro te persigue! Salta a algo alto, sube a un arbol o baja a una alcantarilla';
+    estado = '¡Un perro te persigue! Saltale por encima, sube a algo alto o a un arbol, o baja a una alcantarilla';
   else if (perseguidorCerca === 'gato')
-    estado = '¡Un gato te persigue! Solo la alcantarilla (verde) te salva';
+    estado = '¡Un gato te persigue! Saltale por encima o baja a una alcantarilla (verde)';
   else
     estado = 'Recoge los quesos. Verde: alcantarilla. Naranja: arbol.';
 
@@ -3027,6 +3115,8 @@ function update()
     aviso_bonus -= delta;
   if (aviso_aburrido > 0)
     aviso_aburrido -= delta;
+  if (aviso_salto > 0)
+    aviso_salto -= delta;
   if (tiempo_partida > segundos_de_gracia) {
     tiempo_restante -= delta;
     if (tiempo_restante <= 0) {
