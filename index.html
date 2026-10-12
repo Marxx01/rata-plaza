@@ -1,0 +1,208 @@
+<!doctype html>
+<!--
+  Proyecto personal GPC: La rata de la plaza
+
+  Copiado de tron-v1.html (seminario Tron) y de test.html del entorno.
+  Las librerias estan copiadas en treball/lib para que la carpeta funcione sola al
+  publicarla en una web (GitHub Pages, paginas personales de la UPV...).
+-->
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <title>La rata de la plaza</title>
+    <style>
+      body {
+        background-color: #000;
+        margin: 0;
+        overflow: hidden;
+        font-family: Arial, sans-serif;
+      }
+      #ayuda {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 6px 10px;
+        font-size: 14px;
+      }
+      /* Marcador de quesos y avisos (HUD) */
+      #hud {
+        position: absolute;
+        right: 10px;
+        top: 10px;
+        color: #ffe066;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 8px 14px;
+        font-size: 22px;
+        font-weight: bold;
+        text-align: right;
+      }
+      #hud span {
+        display: block;
+        color: #fff;
+        font-size: 16px;
+        font-weight: normal;
+      }
+      /* Barra de energia del dash (Shift) */
+      #energia {
+        width: 180px;
+        height: 10px;
+        margin: 6px 0 0 auto;
+        background: rgba(255, 255, 255, 0.25);
+        border: 1px solid #fff;
+      }
+      #energia_barra {
+        width: 100%;
+        height: 100%;
+        background: #4cff7a;
+      }
+      /* Pantalla de fin de partida */
+      #fin {
+        display: none;
+        position: absolute;
+        left: 0;
+        top: 35%;
+        width: 100%;
+        text-align: center;
+        color: #fff;
+        text-shadow: 0 0 12px #000;
+      }
+      #fin h1 { font-size: 64px; margin: 0; color: #ff4444; }
+      #fin p { font-size: 24px; }
+      /* Leyenda del minimapa (se coloca encima de la vista de planta desde el codigo) */
+      #leyenda {
+        position: absolute;
+        right: 10px;
+        bottom: 220px;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 4px 8px;
+        font-size: 12px;
+      }
+      #leyenda i {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        margin: 0 3px 0 8px;
+        border-radius: 50%;
+      }
+      /* Marco del minimapa (se dimensiona desde el codigo) */
+      #marco_mapa {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        box-sizing: border-box;
+        border: 2px solid #ffe066;
+        pointer-events: none;
+      }
+      #texto_mapa {
+        position: absolute;
+        left: 0;
+        top: 0;
+        padding: 2px 6px;
+        background: rgba(0, 0, 0, 0.6);
+        color: #ffe066;
+        font-size: 12px;
+        font-weight: bold;
+      }
+      /* Reloj del tiempo limite */
+      #reloj {
+        color: #fff;
+        font-size: 26px;
+        margin: 2px 0 4px 0;
+      }
+      #fin button { font-size: 20px; padding: 8px 20px; cursor: pointer; }
+      /* Menu inicial */
+      #menu {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.45);
+        color: #fff;
+        text-align: center;
+        z-index: 20000;          /* por encima del panel de Stats */
+        overflow-y: auto;
+      }
+      #menu .panel {
+        display: inline-block;
+        margin-top: 8vh;
+        padding: 24px 32px;
+        background: rgba(20, 20, 20, 0.85);
+        border: 2px solid #ffe066;
+        border-radius: 8px;
+        max-width: 90%;
+      }
+      #menu h1 { color: #ffe066; font-size: 44px; margin: 0 0 6px 0; }
+      #menu h2 { color: #ffe066; font-size: 22px; margin: 22px 0 8px 0; }
+      #menu p { margin: 6px 0; font-size: 15px; }
+      #menu input {
+        font-size: 18px;
+        padding: 8px;
+        width: 240px;
+        margin: 14px 6px 6px 0;
+      }
+      #menu button {
+        font-size: 20px;
+        padding: 8px 22px;
+        background: #ffe066;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #menu button:disabled { background: #888; cursor: wait; }
+      #tabla_records { margin: 0 auto; border-collapse: collapse; font-size: 16px; }
+      #tabla_records th, #tabla_records td { padding: 4px 14px; border-bottom: 1px solid #555; }
+      #tabla_records th { color: #ffe066; }
+      #tabla_records td:nth-child(2) { text-align: left; }
+    </style>
+  </head>
+  <body>
+    <!-- Contenedor de la aplicacion -->
+    <div id="container"></div>
+    <div id="ayuda">WASD mover · Shift dash · Espacio saltar · M radar/mapa · C camara orbital · P pausa · L modo ligero</div>
+    <div id="marco_mapa"><div id="texto_mapa">RADAR (M cambia)</div></div>
+    <div id="hud"><div id="marcador_quesos">Quesos: 0</div><div id="reloj">Tiempo: 20.0 s</div><span id="estado">Recoge los quesos. Escondete en las alcantarillas.</span><div id="energia"><div id="energia_barra"></div></div></div>
+    <div id="fin">
+      <h1>FIN DE LA PARTIDA</h1>
+      <p id="motivo"></p>
+      <p id="resumen"></p>
+      <p id="puesto"></p>
+      <button id="volver_menu">Volver al menu (R)</button>
+    </div>
+
+    <!-- Menu inicial: nombre de la partida, boton de empezar y mejores partidas -->
+    <div id="menu">
+      <div class="panel">
+        <h1>La rata de la plaza</h1>
+        <p>Recoge quesos y que no te pillen gatos, perros ni personas.</p>
+        <p>Tienes <b>20 segundos</b> desde que despiertan los animales; cada queso suma <b>5 segundos</b>.</p>
+        <form id="form_menu">
+          <input id="nombre" maxlength="16" placeholder="Nombre de la partida" autocomplete="off">
+          <button id="boton_empezar" type="submit" disabled>Cargando...</button>
+        </form>
+        <h2 id="titulo_records">Mejores partidas</h2>
+        <table id="tabla_records">
+          <thead><tr><th>#</th><th>Nombre</th><th>Quesos</th><th>Tiempo</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="sin_records">Todavia no hay partidas guardadas. ¡Se el primero!</p>
+      </div>
+    </div>
+    <div id="leyenda"><i style="background:#ff0000"></i>Rata <i style="background:#ffee00"></i>Queso <i style="background:#3399ff"></i>Persona <i style="background:#cc44ff"></i>Gato <i style="background:#ff7a00"></i>Perro <i style="background:#33ff88"></i>Alcantarilla <i style="background:#ffb347"></i>Árbol</div>
+
+    <!-- Librerias -->
+    <script src="lib/three.min_r140.js"></script>
+    <script src="lib/OrbitControls.js"></script>
+    <script src="lib/GLTFLoader.js"></script>
+    <script src="lib/stats.min.js"></script>
+
+    <!-- Records online (Supabase). Si esta vacio, los records se guardan en el navegador -->
+    <script src="js/config_online.js"></script>
+
+    <!-- Nuestro codigo -->
+    <script src="js/treball.js"></script>
+  </body>
+</html>
