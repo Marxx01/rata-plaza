@@ -89,6 +89,9 @@ const altura_escalon_rata = 0.35;   // lo que la rata sube andando sin saltar
 const altura_escalon_gato = 0.8;    // los gatos trepan a las plataformas sin saltar
 var plataformas = [];               // {tipo, x, z, ancho, fondo, angulo, altura} para poner quesos encima
 var grupo_plataformas = null;
+// Cajas invisibles que solo frenan a personas y perros: debajo de un banco cabe la
+// rata (y el gato sube), pero una persona no deberia atravesarlo entre las patas.
+var bloqueo_grandes = null;
 var rata_en_plataforma = false;
 
 // Ponemos este modo a true para ajustar la camara y a false para jugar.
@@ -240,6 +243,8 @@ const tipos_perseguidor = {
     altura: 1.0,
     velocidad: 0.09,       // mas rapido que la rata andando, mas lento que con dash
     radio_vision: 9,
+    ancho: 0.2,            // media anchura del cuerpo (para los rayos laterales)
+    alcance: 0.6,          // del centro al hocico (distancia a la que se para)
     sube_arboles: true,
     cantidad: 4,
     color_reserva: 0x444444
@@ -255,6 +260,8 @@ const tipos_perseguidor = {
     altura: 1.3,
     velocidad: 0.1,
     radio_vision: 12,
+    ancho: 0.25,
+    alcance: 0.75,
     sube_arboles: false,
     cantidad: 4,
     color_reserva: 0xc08040
@@ -416,6 +423,28 @@ function saltar()
   velocidad_vertical = impulso_salto;
   en_suelo = false;
   cambiarAnimacionRata('Jump');
+}
+
+// 4- colisiones de la rata. El rayo de s3-colisiones.js sale del centro del cuerpo;
+// con uno solo, un bolardo o una farola fina se colaba por un lado. Lanzamos tres,
+// como tres bigotes: centro e izquierda y derecha del cuerpo. Salen a 0.3 de los pies,
+// asi que en el aire pasan por encima de lo bajo y la rata cae encima (ver objetosSuelo).
+const ancho_rata = 0.2;
+const lateral_rayo = new THREE.Vector3();
+const origen_rayo_rata = new THREE.Vector3();
+function caminoLibreRata(direccion, distancia)
+{
+  // Vector perpendicular a la direccion, en el plano del suelo: (z, 0, -x).
+  lateral_rayo.set(direccion.z, 0, -direccion.x).multiplyScalar(ancho_rata);
+  raycaster.far = distancia;
+  for (var lado = -1; lado <= 1; lado++) {
+    origen_rayo_rata.copy(pos_rata).addScaledVector(lateral_rayo, lado);
+    origen_rayo_rata.y += 0.3;
+    raycaster.set(origen_rayo_rata, direccion);
+    if (raycaster.intersectObjects(objectsToCheck, true).length > 0)
+      return false;
+  }
+  return true;
 }
 
 // Altura del suelo bajo un punto: rayo hacia abajo lanzado desde un poco por encima
@@ -777,6 +806,9 @@ function loadScene()
   // 1b- mobiliario: terraza, papeleras, jardineras y bolardos.
   crearObstaculos();
 
+  bloqueo_grandes = new THREE.Group();
+  scene.add(bloqueo_grandes);
+
   // 7c- plataformas: el escalon de la fuente, cuatro parterres en las diagonales
   // y seis bancos en el anillo exterior, mirando a la fuente. Con rotation.y = -a - PI/2
   // el lado largo queda tangente al anillo y el frente (+Z local) apunta al centro.
@@ -791,7 +823,10 @@ function loadScene()
     var anguloBanco = Math.PI / 6 + b * Math.PI / 3;
     crearBanco(Math.cos(anguloBanco) * 38, Math.sin(anguloBanco) * 38, -anguloBanco - Math.PI / 2);
   }
-  objetosSuelo.push(grupo_plataformas);
+  // Todo lo solido es tambien suelo para la rata: si salta por encima del borde de la
+  // fuente, una papelera o una mesa, cae ENCIMA y no dentro (antes solo lo eran las
+  // plataformas, y la rata acababa metida en el agua de la fuente).
+  objetosSuelo.push(grupo_plataformas, fuente, obstaculos);
 
   // Lo que ayuda a orientarse tambien se dibuja en el minimapa (capa 1 ademas de la 0).
   mostrarEnMapa(fuente);
@@ -803,9 +838,11 @@ function loadScene()
   // El mobiliario frena a todo el mundo. Las plataformas frenan a todos menos a los
   // gatos (trepan) y a la rata cuando va por el aire, que pasa por encima del borde.
   objectsToCheck.push(limitePlaza, fuente, farolas, obstaculos, grupo_plataformas);
-  objectsToCheckIA.push(limitePlaza, fuente, farolas, troncos, obstaculos, grupo_plataformas);
-  objectsToCheckGatos.push(limitePlaza, fuente, farolas, obstaculos);
-  objectsToCheckPerros.push(limitePlaza, fuente, farolas, troncos, obstaculos, grupo_plataformas);
+  // Personas y animales no lanzan rayos contra el cilindro del limite: el borde es un
+  // circulo y su distancia se calcula con una formula (ver distanciaAlBorde).
+  objectsToCheckIA.push(fuente, farolas, troncos, obstaculos, grupo_plataformas, bloqueo_grandes);
+  objectsToCheckGatos.push(fuente, farolas, obstaculos);
+  objectsToCheckPerros.push(fuente, farolas, troncos, obstaculos, grupo_plataformas, bloqueo_grandes);
 
   // Marcador de la rata para la vista de planta: la esfera de 3 facetas con forma
   // de flecha de s3-colisiones.js. Solo se hace visible al dibujar el HUD.
@@ -1017,6 +1054,12 @@ function crearBanco(x, z, anguloY)
   banco.position.set(x, 0, z);
   banco.rotation.y = anguloY;
   grupo_plataformas.add(banco);
+
+  // Caja invisible del tamano del banco, solo para personas y perros.
+  var caja = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 0.6), material_invisible);
+  caja.position.set(x, 0.45, z);
+  caja.rotation.y = anguloY;
+  bloqueo_grandes.add(caja);
   plataformas.push({ tipo: 'caja', x: x, z: z, ancho: 1.6, fondo: 0.2, angulo: anguloY, altura: 0.5 });
   zonas_ocupadas.push({ x: x, z: z, radio: 1.5 });
 }
@@ -1107,9 +1150,11 @@ function crearObstaculos()
   }
 
   // Bolardos: un anillo de doce alrededor de la fuente, con hueco para pasar entre ellos.
+  // A radio 9.5 dejan un pasillo de 2.7 con el escalon (antes, a 7.5, el pasillo era tan
+  // estrecho que un perro podia quedar encajado sin poder girar).
   for (var m = 0; m < 12; m++) {
     var anguloBolardo = m * Math.PI / 6;
-    crearBolardo(Math.cos(anguloBolardo) * 7.5, Math.sin(anguloBolardo) * 7.5);
+    crearBolardo(Math.cos(anguloBolardo) * 9.5, Math.sin(anguloBolardo) * 9.5);
   }
 }
 
@@ -1148,7 +1193,7 @@ function crearSilla(x, z, anguloY)
   silla.position.set(x, 0, z);
   silla.rotation.y = anguloY;
   obstaculos.add(silla);
-  crearCajaInvisible(x, z, 0.55, 1, 0.55, anguloY);
+  crearCajaInvisible(x, z, 0.55, 0.48, 0.55, anguloY);   // hasta el asiento
   zonas_ocupadas.push({ x: x, z: z, radio: 0.8 });
 }
 
@@ -1172,7 +1217,7 @@ function crearMesa(x, z)
   mesa.traverse(function(objeto) { if (objeto.isMesh) objeto.castShadow = true; });
   mesa.position.set(x, 0, z);
   obstaculos.add(mesa);
-  crearCajaInvisible(x, z, 1.2, 1, 1.2, 0);
+  crearCajaInvisible(x, z, 1.2, 0.74, 1.2, 0);   // hasta el tablero
   zonas_ocupadas.push({ x: x, z: z, radio: 1.2 });
 }
 
@@ -1908,6 +1953,7 @@ function rataInalcanzable()
 
 function actualizarPerseguidor(agente, delta)
 {
+  var xAntes = agente.pos.x, zAntes = agente.pos.z;
   var haciaRata = hacia_rata_tmp.subVectors(pos_rata, agente.pos);
   haciaRata.y = 0;
   var distancia = haciaRata.length();
@@ -1919,21 +1965,36 @@ function actualizarPerseguidor(agente, delta)
       agente.estado = 'paseando';
       agente.frames_giro = 0;
     } else {
-      // Angulo hacia la rata: atan2(x, z) porque velocity = (sin a, 0, cos a).
-      var anguloObjetivo = Math.atan2(haciaRata.x, haciaRata.z);
-      var diferencia = anguloObjetivo - agente.angulo;
-      // Llevamos la diferencia a [-PI, PI] para girar por el lado corto.
-      diferencia = Math.atan2(Math.sin(diferencia), Math.cos(diferencia));
-      agente.angulo += THREE.MathUtils.clamp(diferencia, -giro_perseguidor, giro_perseguidor);
+      if (agente.frames_giro > 0) {
+        // Esta rodeando un obstaculo: sigue girando hacia el lado elegido unos frames.
+        agente.angulo += agente.direccion_giro * giro_perseguidor * 1.5;
+        agente.frames_giro--;
+      } else {
+        // Angulo hacia la rata: atan2(x, z) porque velocity = (sin a, 0, cos a).
+        var anguloObjetivo = Math.atan2(haciaRata.x, haciaRata.z);
+        var diferencia = anguloObjetivo - agente.angulo;
+        // Llevamos la diferencia a [-PI, PI] para girar por el lado corto.
+        diferencia = Math.atan2(Math.sin(diferencia), Math.cos(diferencia));
+        agente.angulo += THREE.MathUtils.clamp(diferencia, -giro_perseguidor, giro_perseguidor);
+        agente.velocity.set(Math.sin(agente.angulo), 0, Math.cos(agente.angulo));
+
+        // Si la fuente, el mobiliario o una persona se interponen, se rodean: los
+        // sensores diagonales del Tron eligen el lado con mas espacio libre.
+        if (distanciaLibre(agente, agente.velocity, agente.lista_obstaculos) < 1.5) {
+          direccion_izquierda_ia.set(Math.sin(agente.angulo + Math.PI / 4), 0, Math.cos(agente.angulo + Math.PI / 4));
+          direccion_derecha_ia.set(Math.sin(agente.angulo - Math.PI / 4), 0, Math.cos(agente.angulo - Math.PI / 4));
+          agente.direccion_giro =
+            distanciaLibre(agente, direccion_izquierda_ia, agente.lista_obstaculos) >=
+            distanciaLibre(agente, direccion_derecha_ia, agente.lista_obstaculos) ? 1 : -1;
+          agente.frames_giro = 20;
+        }
+      }
       agente.velocity.set(Math.sin(agente.angulo), 0, Math.cos(agente.angulo));
 
-      // Si la fuente, una farola o una persona se interponen, rodea.
-      if (distanciaLibre(agente, agente.velocity, agente.lista_obstaculos) < 1.2) {
-        agente.angulo += giro_perseguidor * 2;
-        agente.velocity.set(Math.sin(agente.angulo), 0, Math.cos(agente.angulo));
-      }
-
-      agente.pos.addScaledVector(agente.velocity, agente.tipo.velocidad);
+      // Solo avanza si cabe: asi nunca atraviesa nada solido, aunque persiga a la rata.
+      if (distanciaLibreAncha(agente, agente.velocity, agente.lista_obstaculos) >
+          agente.tipo.velocidad + agente.tipo.alcance)
+        agente.pos.addScaledVector(agente.velocity, agente.tipo.velocidad);
 
       // El gato trepa: si la rata esta en un arbol y el gato llega al tronco, sube con ella.
       if (rata_en_arbol && agente.tipo.sube_arboles && arbol_actual !== null &&
@@ -1954,6 +2015,8 @@ function actualizarPerseguidor(agente, delta)
   // no las tienen debajo nunca porque las rodean.
   if (agente.tipo.sube_arboles)
     alturaModelo = Math.max(alturaModelo, alturaSuelo(agente.pos.x, agente.pos.z, agente.modelo.position.y, altura_escalon_gato));
+
+  comprobarAtasco(agente, xAntes, zAntes);
 
   agente.modelo.position.set(agente.pos.x, alturaModelo, agente.pos.z);
   agente.modelo.rotation.set(0, agente.angulo + agente.desfase, 0);
@@ -2130,12 +2193,69 @@ function loadPersona(fichero, anguloInicial)
 // distancia al primer obstaculo, sin contarse a si mismo (IA del Tron).
 function distanciaLibre(agente, direccion, lista)
 {
+  // El rayo sale a 0.35 de los pies: asi choca con el escalon de la fuente y los
+  // parterres (0.5 de alto). Los gatos que han subido al escalon lo lanzan desde alli.
   origen_rayo_ia.copy(agente.pos);
-  origen_rayo_ia.y += 0.5;
+  origen_rayo_ia.y = agente.modelo.position.y + 0.35;
   raycaster_ia.set(origen_rayo_ia, direccion);
 
   const impactos = raycaster_ia.intersectObjects(listaSinAgente(agente, lista), true);
-  return impactos.length > 0 ? impactos[0].distance : Infinity;
+  var distancia = impactos.length > 0 ? impactos[0].distance : Infinity;
+  return Math.min(distancia, distanciaAlBorde(origen_rayo_ia, direccion));
+}
+
+// RENDIMIENTO- distancia desde un punto de la plaza hasta su borde (circunferencia de
+// radio R) avanzando en la direccion d (unitaria). Es la interseccion rayo-circunferencia:
+// |p + t d| = R  ->  t^2 + 2 (p.d) t + (|p|^2 - R^2) = 0, y nos quedamos con la raiz
+// positiva. Con productos escalares (tema 1) en vez de lanzar un rayo contra los 128
+// triangulos del cilindro invisible, que era lo mas caro de la IA.
+function distanciaAlBorde(punto, direccion)
+{
+  var R = radio_plaza - 0.3;
+  var b = punto.x * direccion.x + punto.z * direccion.z;            // p . d
+  var c = punto.x * punto.x + punto.z * punto.z - R * R;           // |p|^2 - R^2
+  var discriminante = b * b - c;
+  if (discriminante < 0)
+    return Infinity;
+  return -b + Math.sqrt(discriminante);
+}
+
+// ATASCO- como nadie atraviesa nada, alguien puede quedar encajado entre obstaculos sin
+// poder avanzar en ninguna direccion. Si lleva 40 frames sin moverse, da media vuelta
+// (con algo de azar) para salir de ahi.
+function comprobarAtasco(agente, xAntes, zAntes)
+{
+  if (Math.abs(agente.pos.x - xAntes) + Math.abs(agente.pos.z - zAntes) < 0.0001)
+    agente.frames_quieto = (agente.frames_quieto || 0) + 1;
+  else
+    agente.frames_quieto = 0;
+
+  if (agente.frames_quieto > 40) {
+    agente.angulo += Math.PI * (0.7 + Math.random() * 0.6);
+    agente.frames_giro = 0;
+    agente.frames_quieto = 0;
+  }
+}
+
+// Medidas del cuerpo: los animales las tienen en su tipo; las personas, fijas.
+function anchoAgente(agente) { return agente.tipo ? agente.tipo.ancho : 0.3; }
+function alcanceAgente(agente) { return agente.tipo ? agente.tipo.alcance : 0.5; }
+
+// Como la de la rata: tres rayos (centro y los dos costados) y devuelve el mas corto.
+// Se usa para decidir si el agente puede dar el paso sin meterse en nada solido.
+const lateral_rayo_ia = new THREE.Vector3();
+const centro_agente_tmp = new THREE.Vector3();
+function distanciaLibreAncha(agente, direccion, lista)
+{
+  var minima = Infinity;
+  centro_agente_tmp.copy(agente.pos);
+  lateral_rayo_ia.set(direccion.z, 0, -direccion.x).multiplyScalar(anchoAgente(agente));
+  for (var lado = -1; lado <= 1; lado++) {
+    agente.pos.copy(centro_agente_tmp).addScaledVector(lateral_rayo_ia, lado);
+    minima = Math.min(minima, distanciaLibre(agente, direccion, lista));
+  }
+  agente.pos.copy(centro_agente_tmp);
+  return minima;
 }
 
 // RENDIMIENTO- la lista de obstaculos sin el propio agente se calcula una vez y se
@@ -2196,12 +2316,13 @@ function pasear(agente, lista, velocidad, giro)
   }
 
   // Si de todos modos hay algo delante, se queda parado girando.
-  if (distancia_frente > velocidad + 0.5)
+  if (distanciaLibreAncha(agente, agente.velocity, lista) > velocidad + alcanceAgente(agente))
     agente.pos.addScaledVector(agente.velocity, velocidad);
 }
 
 function actualizarPersona(persona, delta)
 {
+  var xAntes = persona.pos.x, zAntes = persona.pos.z;
   var haciaRata = hacia_rata_tmp.subVectors(pos_rata, persona.pos);
   haciaRata.y = 0;
   var distancia = haciaRata.length();
@@ -2245,7 +2366,7 @@ function actualizarPersona(persona, delta)
       if (distancia > alcance_patada * 0.8) {
         // Avanza algo mas rapido que paseando, si no hay nada en medio.
         var paso = velocidad_persona * 1.5;
-        if (distanciaLibre(persona, persona.velocity, objectsToCheckIA) > paso + 0.5)
+        if (distanciaLibreAncha(persona, persona.velocity, objectsToCheckIA) > paso + alcanceAgente(persona))
           persona.pos.addScaledVector(persona.velocity, paso);
       } else {
         persona.estado = 'pateando';
@@ -2276,6 +2397,9 @@ function actualizarPersona(persona, delta)
     if (persona.estado === 'paseando')
       pasear(persona, objectsToCheckIA, velocidad_persona, giro_persona);
   }
+
+  if (persona.estado !== 'pateando')
+    comprobarAtasco(persona, xAntes, zAntes);
 
   persona.modelo.position.copy(persona.pos);
   persona.modelo.rotation.set(0, persona.angulo, 0);
@@ -2910,13 +3034,11 @@ function update()
       speed = controls.speed;   // hacia atras siempre despacio
     }
 
-    var origenRayo = pos_rata.clone();
-    origenRayo.y += 0.3;
-    raycaster.set(origenRayo, direccion);
-    const intersects = raycaster.intersectObjects(objectsToCheck, true);
+    // Hacia delante se para cuando el hocico toca; hacia atras hay que dejar sitio a la cola.
+    var margen = (controls.moveBackward && !controls.moveForward) ? 1.0 : 0.6;
 
-    // Si no hay interseccion, permitir el movimiento
-    if (intersects.length === 0 || intersects[0].distance > speed + 0.5) {
+    // Si no hay nada delante, permitir el movimiento
+    if (caminoLibreRata(direccion, speed + margen)) {
       pos_rata.add(direccion.multiplyScalar(speed));
       moviendo = true;
     }
