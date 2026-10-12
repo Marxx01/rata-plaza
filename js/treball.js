@@ -268,6 +268,14 @@ const tipos_perseguidor = {
   }
 };
 const giro_perseguidor = 0.08;
+// ABURRIMIENTO- tras 10 s persiguiendo, el animal se cansa: se queda quieto un momento
+// (comiendo o tumbado), se da la vuelta y pasea. Durante unos segundos no vuelve a
+// fijarse en la rata; despues puede perseguirla otra vez.
+const segundos_max_persecucion = 10;
+const segundos_aburrido = 5;       // sin volver a perseguir
+const segundos_parado_aburrido = 1.5;   // de esos, los primeros quieto
+var aviso_aburrido = 0;            // segundos que queda el mensaje en el HUD
+var texto_aburrido = '';
 const distancia_atrapar = 0.9;
 const segundos_de_gracia = 6;   // al empezar, los perseguidores tardan un poco en fijarse en la rata
 var perseguidores = [];
@@ -1858,7 +1866,9 @@ function nuevoPerseguidor(tipo, modelo, anguloInicial, mixerAgente, acciones)
     angulo: Math.atan2(-Math.cos(anguloInicial), -Math.sin(anguloInicial)),  // mirando al centro
     angulo_inicial: Math.atan2(-Math.cos(anguloInicial), -Math.sin(anguloInicial)),
     velocity: new THREE.Vector3(0, 0, 1),
-    estado: 'paseando',
+    estado: 'paseando',            // 'paseando', 'persiguiendo' o 'aburrido'
+    tiempo_persiguiendo: 0,
+    tiempo_aburrido: 0,
     direccion_giro: 1,
     frames_giro: 0,
     frames_hasta_cambio: 60,
@@ -1914,10 +1924,14 @@ function loadPerseguidor(nombreTipo, indice, anguloInicial)
       }
       var clipCorrer = buscarClip(gltf.animations, 'Run') || buscarClip(gltf.animations, 'Gallop') || clipAndar;
       var clipAtacar = buscarClip(gltf.animations, 'Attack') || buscarClip(gltf.animations, 'Headbutt');
+      // Para cuando se aburre: el gato se pone a comer y el perro tambien (o se queda quieto).
+      var clipQuieto = buscarClip(gltf.animations, 'Idle_Eating') || buscarClip(gltf.animations, 'Eating') ||
+                       buscarClip(gltf.animations, 'Idle');
       var acciones = {
         andar: clipAndar !== null ? mixerAgente.clipAction(clipAndar) : null,
         correr: clipCorrer !== null ? mixerAgente.clipAction(clipCorrer) : null,
-        atacar: clipAtacar !== null ? mixerAgente.clipAction(clipAtacar) : null
+        atacar: clipAtacar !== null ? mixerAgente.clipAction(clipAtacar) : null,
+        quieto: clipQuieto !== null ? mixerAgente.clipAction(clipQuieto) : null
       };
       console.log(nombreTipo + ' cargado. Animaciones:', gltf.animations.map(function(a) { return a.name; }));
 
@@ -1927,7 +1941,7 @@ function loadPerseguidor(nombreTipo, indice, anguloInicial)
     function(error) {
       console.warn('No se pudo cargar el modelo del ' + nombreTipo + ' (' + fichero + '); se usa el de primitivas.');
       nuevoPerseguidor(tipo, crearPerseguidorPrimitivas(tipo.color_reserva), anguloInicial, null,
-        { andar: null, correr: null, atacar: null });
+        { andar: null, correr: null, atacar: null, quieto: null });
     }
   );
 }
@@ -1964,7 +1978,18 @@ function actualizarPerseguidor(agente, delta)
       // Pierde el rastro y vuelve a pasear.
       agente.estado = 'paseando';
       agente.frames_giro = 0;
+      agente.tiempo_persiguiendo = 0;
+    } else if (agente.tiempo_persiguiendo > segundos_max_persecucion) {
+      // ABURRIMIENTO- lleva demasiado tiempo detras de la rata: se cansa y la deja.
+      agente.estado = 'aburrido';
+      agente.tiempo_aburrido = segundos_aburrido;
+      agente.tiempo_persiguiendo = 0;
+      agente.angulo += Math.PI * (0.7 + Math.random() * 0.6);   // se da la vuelta
+      agente.frames_giro = 0;
+      aviso_aburrido = 2.5;
+      texto_aburrido = 'Un ' + agente.tipo.nombre + ' se ha aburrido de perseguirte';
     } else {
+      agente.tiempo_persiguiendo += delta;
       if (agente.frames_giro > 0) {
         // Esta rodeando un obstaculo: sigue girando hacia el lado elegido unos frames.
         agente.angulo += agente.direccion_giro * giro_perseguidor * 1.5;
@@ -2004,11 +2029,20 @@ function actualizarPerseguidor(agente, delta)
       if (distancia < distancia_atrapar)
         terminarJuego('Te ha atrapado un ' + agente.tipo.nombre, agente);
     }
-  } else {
-    if (!rataASalvoDe(agente) && distancia < agente.tipo.radio_vision && tiempo_partida > segundos_de_gracia)
-      agente.estado = 'persiguiendo';
-    else
+  } else if (agente.estado === 'aburrido') {
+    // Primero se queda quieto un momento; luego pasea, aunque vea a la rata.
+    agente.tiempo_aburrido -= delta;
+    if (agente.tiempo_aburrido < segundos_aburrido - segundos_parado_aburrido)
       pasear(agente, agente.lista_obstaculos, agente.tipo.velocidad * 0.5, giro_perseguidor * 0.5);
+    if (agente.tiempo_aburrido <= 0)
+      agente.estado = 'paseando';
+  } else {
+    if (!rataASalvoDe(agente) && distancia < agente.tipo.radio_vision && tiempo_partida > segundos_de_gracia) {
+      agente.estado = 'persiguiendo';
+      agente.tiempo_persiguiendo = 0;
+    } else {
+      pasear(agente, agente.lista_obstaculos, agente.tipo.velocidad * 0.5, giro_perseguidor * 0.5);
+    }
   }
 
   // Los que trepan (gatos) siguen la altura de las plataformas que pisan; los perros
@@ -2016,7 +2050,11 @@ function actualizarPerseguidor(agente, delta)
   if (agente.tipo.sube_arboles)
     alturaModelo = Math.max(alturaModelo, alturaSuelo(agente.pos.x, agente.pos.z, agente.modelo.position.y, altura_escalon_gato));
 
-  comprobarAtasco(agente, xAntes, zAntes);
+  // Quieto a proposito (aburrido) no cuenta como atasco.
+  var paradoAburrido = agente.estado === 'aburrido' &&
+    agente.tiempo_aburrido >= segundos_aburrido - segundos_parado_aburrido;
+  if (!paradoAburrido)
+    comprobarAtasco(agente, xAntes, zAntes);
 
   agente.modelo.position.set(agente.pos.x, alturaModelo, agente.pos.z);
   agente.modelo.rotation.set(0, agente.angulo + agente.desfase, 0);
@@ -2024,8 +2062,14 @@ function actualizarPerseguidor(agente, delta)
 
   // Animacion: con modelo, clip de andar o correr; con primitivas, patas como pendulos.
   if (agente.mixer !== null) {
-    if (!juego_terminado)
-      cambiarAnimacionAgente(agente, agente.estado === 'persiguiendo' ? agente.acciones.correr : agente.acciones.andar);
+    if (!juego_terminado) {
+      if (agente.estado === 'persiguiendo')
+        cambiarAnimacionAgente(agente, agente.acciones.correr);
+      else if (paradoAburrido && agente.acciones.quieto !== null)
+        cambiarAnimacionAgente(agente, agente.acciones.quieto);
+      else
+        cambiarAnimacionAgente(agente, agente.acciones.andar);
+    }
     agente.mixer.update(delta);
   } else if (agente.patas !== null) {
     agente.fase += delta * (agente.estado === 'persiguiendo' ? 18 : 9);
@@ -2688,6 +2732,8 @@ function empezarPartida()
     perseguidores[j].pos.copy(perseguidores[j].pos_inicial);
     perseguidores[j].angulo = perseguidores[j].angulo_inicial;
     perseguidores[j].estado = 'paseando';
+    perseguidores[j].tiempo_persiguiendo = 0;
+    perseguidores[j].tiempo_aburrido = 0;
   }
 
   tiempo_partida = 0;
@@ -2750,6 +2796,8 @@ function actualizarHUD()
     estado = 'En el arbol: el perro no llega... ¡pero el gato trepa! Gira con A/D para mirar';
   else if (rata_en_plataforma)
     estado = 'En alto: personas y perros no suben... ¡los gatos si!';
+  else if (aviso_aburrido > 0 && perseguidorCerca === null)
+    estado = texto_aburrido + '. ¡Aprovecha!';
   else if (perseguidorCerca === 'perro')
     estado = '¡Un perro te persigue! Salta a algo alto, sube a un arbol o baja a una alcantarilla';
   else if (perseguidorCerca === 'gato')
@@ -2977,6 +3025,8 @@ function update()
   tiempo_partida += delta;
   if (aviso_bonus > 0)
     aviso_bonus -= delta;
+  if (aviso_aburrido > 0)
+    aviso_aburrido -= delta;
   if (tiempo_partida > segundos_de_gracia) {
     tiempo_restante -= delta;
     if (tiempo_restante <= 0) {
