@@ -1,5 +1,4 @@
-// La rata de la plaza - proyecto personal de GPC
-// Estructura copiada del Tron (seminario 5)
+// La rata de la plaza - proyecto personal de GPC - Marc Hurtado
 
 // Variables globales que van siempre
 var renderer, scene, camera;
