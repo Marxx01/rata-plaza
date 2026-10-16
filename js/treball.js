@@ -1,29 +1,7 @@
-/*
- * Proyecto personal GPC: La rata de la plaza
- *
- * Version V5. Estructura copiada del seminario Tron (tron-v1.js):
- *   1- escenario        plaza circular grande, bordillo, fachadas, fuente, farolas, skybox
- *                       y mobiliario con primitivas (mesas, sillas, papeleras, jardineras, bolardos)
- *   2- rata             modelo GLTF con animaciones (ej-loader.js + ej-mixamo.js)
- *   3- movimiento y camara en tercera persona (s3-cam2.js + camara de muelle del Tron)
- *                       con dash de energia limitada (Shift)
- *   4- colisiones       raycaster contra cilindros invisibles (s3-colisiones.js + Tron)
- *   5- personas         pasean de forma erratica; las que saben dar patadas se acercan y
- *                       patean; chocar con cualquiera de ellas acaba la partida
- *   6- quesos           cunas amarillas brillantes que aparecen al azar y se recogen
- *   7- escondites       alcantarillas (nadie te sigue) y arboles (la rata y el gato suben,
- *                       el perro no llega)
- *   7c- plataformas     escalon de la fuente, parterres y bancos: se sube de un salto (Espacio);
- *                       personas y perros no suben, los gatos si. Altura del suelo por rayo
- *                       vertical, copiado del Tron
- *   8- perseguidores    gatos y perros con modelo GLTF (o primitivas si falta el fichero);
- *                       persiguen hasta que te escondes de ellos
- *   9- estado del juego HUD, barra de energia, fps y fin de partida
- *  10- menu y records  menu inicial con nombre de partida, tiempo limite (20 s desde que
- *                       despiertan los animales, +5 s por queso) y tabla de mejores partidas,
- *                       online con Supabase si esta configurado (js/config_online.js)
- */
+// La rata de la plaza - proyecto personal de GPC
+// Estructura copiada del Tron (seminario 5)
 
+// Variables globales que van siempre
 var renderer, scene, camera;
 var cameraControls;
 var cameraTop;
@@ -33,12 +11,11 @@ const objetivo_camera_top = new THREE.Vector3();
 var clock = new THREE.Clock();
 
 // 1- escenario
-// Medidas principales de la plaza. Es un circulo centrado en el origen.
 const radio_plaza = 45;
 const radio_acera = 52;
 const radio_fachadas = 58;
-var obstaculos = null;          // grupo con el mobiliario: obstaculo para todos
-var zonas_ocupadas = [];        // {x, z, radio} de todo lo que ocupa suelo, para no poner quesos encima
+var obstaculos = null;
+var zonas_ocupadas = [];   // sitios donde no se ponen quesos
 const alcance_hud = radio_acera * 2 + 4;
 var fuente = null;
 var agua_fuente = null;
@@ -49,71 +26,56 @@ var rata = null;
 var mixer = null;
 var acciones_rata = {};
 var accion_actual = null;
-// El modelo de Quaternius viene mirando hacia +Z, igual que nuestro vector velocity,
-// asi que no hace falta sumar PI/2 como con la moto del Tron.
-const escala_rata = 0.26;   // la rata mide unos 0.6 de alto
+const escala_rata = 0.26;   // la rata mide unos 0.6
 
 // 3- movimiento y camara en tercera persona
-// Copiado y pegado de s3-cam2.js / s3-colisiones.js.
 var angulo = 0;
 var velocity = new THREE.Vector3(0, 0, 1);
 
-// DASH- la carrera (Shift) gasta energia: dura unos segundos y luego hay que
-// esperar a que se recargue. Sirve para escapar de los gatos y llegar a un escondite.
-const duracion_dash = 2.0;     // segundos corriendo seguidos con la energia llena
-const recarga_dash = 5.0;      // segundos para recuperar toda la energia
-const energia_minima_dash = 0.25;  // no se puede volver a correr hasta tener este cuarto
-var energia_dash = 1;          // de 0 (vacia) a 1 (llena)
+// dash (Shift)
+const duracion_dash = 2.0;   // segundos corriendo
+const recarga_dash = 5.0;   // segundos para recargar
+const energia_minima_dash = 0.25;
+var energia_dash = 1;   // de 0 a 1
 var dash_activo = false;
 
-// FINAL- inclinacion visual al girar (copiado del Tron).
+// inclinacion al girar (Tron)
 const inclinacion_maxima = THREE.MathUtils.degToRad(12);
 const rapidez_inclinacion = 10;
 let inclinacion_actual = 0;
 
-// FINAL- salto con cinematica basica (copiado del Tron). Aqui el suelo es plano,
-// asi que no hace falta el rayo vertical: el suelo esta siempre en y = 0.
+// salto (Tron)
 const gravedad = -18;
-// Altura maxima del salto = v^2 / (2 g): con 6.3 llega a 1.1, suficiente para las
-// plataformas (0.5) y para pasar por encima del lomo de gatos y perros (altura_lomo).
-const impulso_salto = 6.3;
+const impulso_salto = 6.3;   // sube hasta 1.1
 let velocidad_vertical = 0;
 let en_suelo = true;
 
-// 7c- plataformas. Deteccion de la altura del suelo con un rayo vertical, copiada
-// del Tron (detectarSuelo). Solo las plataformas estan en objetosSuelo: si el rayo
-// no toca nada, el suelo es la plaza (y = 0).
+// 7c- plataformas
 const objetosSuelo = [];
 const raycaster_suelo = new THREE.Raycaster();
 const origen_rayo_suelo = new THREE.Vector3();
 const direccion_rayo_suelo = new THREE.Vector3(0, -1, 0);
-const altura_escalon_rata = 0.35;   // lo que la rata sube andando sin saltar
-const altura_escalon_gato = 0.8;    // los gatos trepan a las plataformas sin saltar
-var plataformas = [];               // {tipo, x, z, ancho, fondo, angulo, altura} para poner quesos encima
+const altura_escalon_rata = 0.35;   // sube sin saltar
+const altura_escalon_gato = 0.8;   // los gatos trepan
+var plataformas = [];
 var grupo_plataformas = null;
-// Cajas invisibles que solo frenan a personas y perros: debajo de un banco cabe la
-// rata (y el gato sube), pero una persona no deberia atravesarlo entre las patas.
-var bloqueo_grandes = null;
+var bloqueo_grandes = null;   // solo para personas y perros
 var rata_en_plataforma = false;
 
-// Ponemos este modo a true para ajustar la camara y a false para jugar.
+// ajuste de la camara (Tron)
 var modo_tunear_camara = false;
 var distancia_camara = 3.5;
 var altura_camara = 1.5;
 var desfase_lookat_y = 0.4;
 
-// CAMARA VIGIA- en un escondite (alcantarilla o arbol) la camara sube y se aleja,
-// mira unos metros por delante de la rata y abre el angulo de vision: es el zoom
-// cambiando el fovy del tema 3. Asi se ve quien ronda y se elige por donde salir;
-// con A/D se gira la vista sin salir del escondite.
+// camara en los escondites
 const distancia_camara_escondite = 10;
 const altura_camara_escondite = 13;
 const adelanto_mirada_escondite = 3;
 const fov_normal = 50;
 const fov_escondite = 72;
 
-// FINAL- spring camera. La rigidez atrae la camara hacia su posicion ideal y
-// la amortiguacion frena su velocidad para que no oscile indefinidamente.
+// camara con muelle (Tron)
 const rigidez_camara = 50;
 const amortiguacion_camara = 14;
 const velocidad_camara = new THREE.Vector3();
@@ -124,30 +86,24 @@ const mirada_actual_camara = new THREE.Vector3();
 const aceleracion_camara = new THREE.Vector3();
 let camara_spring_iniciada = false;
 
-// DEBUG- permite cambiar entre tercera persona y camara orbital con la tecla C.
-var camara_orbital = false;
+var camara_orbital = false;   // C: camara orbital
 
-// PAUSA- la escena sigue dibujandose, pero el juego deja de actualizarse.
-var juego_pausado = false;
+var juego_pausado = false;   // P: pausa
 
 // 4- colisiones
-// Copiado y pegado LITERAL de js/s3-colisiones.js.
 const raycaster = new THREE.Raycaster();
-var objectsToCheck = [];      // lo que frena a la rata
-var objectsToCheckIA = [];    // lo que esquivan las personas
-var objectsToCheckGatos = []; // lo que esquivan los gatos (pueden pasar junto a los arboles)
+var objectsToCheck = [];   // rata
+var objectsToCheckIA = [];   // personas
+var objectsToCheckGatos = [];   // gatos
 var marcador_rata = null;
-// RADAR- el minimapa sigue a la rata y gira con ella: arriba siempre es hacia donde
-// mira (el ejercicio "dificil" de la vista superior de la sesion 3). Con M se cambia
-// al mapa completo de la plaza, fijo y con el norte arriba.
+// minimapa: radar o mapa completo (M)
 var modo_radar = true;
-const alcance_radar = 48;           // lado del cuadrado que se ve en modo radar
-var alcance_mapa_actual = 0;        // para recalcular la proyeccion solo al cambiar
-var lado_mapa_actual = 0;           // para recolocar el marco solo al cambiar de tamano
-// Marcadores de la vista de planta (rata, personas, animales y quesos). Solo se ven en el HUD.
-var marcadores = [];
+const alcance_radar = 48;
+var alcance_mapa_actual = 0;
+var lado_mapa_actual = 0;
+var marcadores = [];   // marcadores del minimapa
 const color_marcador = { rata: 0xff0000, persona: 0x3399ff, gato: 0xcc44ff, perro: 0xff7a00, queso: 0xffee00 };
-// Material invisible para los cilindros de colision (copiado del limite de la arena del Tron).
+// material de los colisionadores
 const material_invisible = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide,
   transparent: true,
@@ -170,29 +126,26 @@ const controls = {
 
 // 5- personas
 const velocidad_persona = 0.05;
-const distancia_deteccion_persona = 3;   // distancia a la que esquivan obstaculos
+const distancia_deteccion_persona = 3;
 const giro_persona = 0.04;
-// Altura que queremos para las personas. Cada GLB de Quaternius trae una escala
-// interna distinta, asi que la escala se calcula al cargar midiendo su caja envolvente.
 const altura_persona = 2.6;
-// Deteccion de la rata: cerca y dentro del campo de vision (120 grados).
+// ven a la rata si esta cerca y delante (120 grados)
 const radio_vision_persona = 4;
 const cos_medio_angulo_vision = Math.cos(THREE.MathUtils.degToRad(60));
-const alcance_patada = 1.9;              // si la rata esta mas cerca cuando llega el golpe, pierde
-const momento_impacto_patada = 0.45;     // segundos desde que empieza el clip
-const frames_maximos_acercando = 240;    // si en 4 segundos no alcanza a la rata, desiste
-const distancia_atrapar_persona = 1.2;   // chocar con una persona tambien acaba la partida
+const alcance_patada = 1.9;
+const momento_impacto_patada = 0.45;   // segundos
+const frames_maximos_acercando = 240;
+const distancia_atrapar_persona = 1.2;
 var personas = [];
 
-// Rayos compartidos por personas y gatos (copiado de la IA del Tron).
+// rayos de la IA (Tron)
 const raycaster_ia = new THREE.Raycaster();
-const hacia_rata_tmp = new THREE.Vector3();   // vector reutilizado cada frame (sin new)
+const hacia_rata_tmp = new THREE.Vector3();
 const origen_rayo_ia = new THREE.Vector3();
 const direccion_izquierda_ia = new THREE.Vector3();
 const direccion_derecha_ia = new THREE.Vector3();
 
-// Ficheros de las personas. Los tres primeros (CharacterArmature) traen el clip
-// Kick_Right; los otros solo tienen Punch y atrapan a la rata al chocar con ella.
+// los tres primeros saben dar patadas
 const ficheros_personas = [
   'models/personas/Punk by Quaternius - BTALZymknF.glb',
   'models/personas/Business Man by Quaternius - JFrLIKqvCH.glb',
@@ -212,49 +165,41 @@ var quesos = [];
 var quesos_recogidos = 0;
 var tiempo_hasta_queso = 1;
 var textura_halo = null;
-var textura_haz = null;         // degradado vertical para las columnas de luz de los escondites
+var textura_haz = null;
 var material_queso = null;
 
 // 7- escondites
 const radio_escondite = 1.1;
-const profundidad_escondite = 0.5;   // cuanto baja la rata por la alcantarilla
+const profundidad_escondite = 0.5;   // lo que baja la rata
 var escondites = [];
 var rata_escondida = false;
 
-// 7b- arboles: segundo tipo de escondite. La rata sube, el gato tambien, el perro no llega.
+// 7b- arboles
 const radio_arbol = 1.3;
 const altura_subida_rata = 1.9;
 const altura_subida_gato = 1.3;
 var arboles = [];
-var troncos = null;            // grupo con los troncos: obstaculo para personas y perros
+var troncos = null;
 var rata_en_arbol = false;
 var arbol_actual = null;
 
-// 8- perseguidores: gatos y perros. Cada tipo tiene sus ficheros (se reparten entre
-// los animales del tipo), tamano, velocidad y alcance de vision; solo el gato trepa.
-// Todos los modelos de Quaternius miran hacia +Z, igual que la rata: se comprobo
-// mirando donde queda el hueso de la cabeza respecto a la cola en cada GLB.
-// Los modelos sin esqueleto (Poly by Google, madtrollstudio) no se usan: no pueden andar.
+// 8- perseguidores: gatos y perros
 const tipos_perseguidor = {
   gato: {
     nombre: 'gato',
     ficheros: ['models/gato/Cat by Quaternius - qKICY6xla2.glb'],
-    // Tintes para distinguir a los gatos que salen del mismo fichero (como la moto
-    // roja de la IA del Tron, que se colorea clonando los materiales).
-    tintes: [0xffffff, 0xffb070, 0x9aa0b4, 0x806050],
+    tintes: [0xffffff, 0xffb070, 0x9aa0b4, 0x806050],   // colores para distinguirlos
     altura: 1.0,
-    velocidad: 0.09,       // mas rapido que la rata andando, mas lento que con dash
+    velocidad: 0.09,
     radio_vision: 9,
-    ancho: 0.2,            // media anchura del cuerpo (para los rayos laterales)
-    alcance: 0.6,          // del centro al hocico (distancia a la que se para)
-    altura_lomo: 0.5,      // si los pies de la rata pasan de aqui, salta por encima (lomo real 0.57)
+    ancho: 0.2,   // media anchura
+    alcance: 0.6,   // distancia a la que se para
+    altura_lomo: 0.5,   // para saltarle por encima
     sube_arboles: true,
-    cantidad: 4,
-    color_reserva: 0x444444
+    cantidad: 4
   },
   perro: {
     nombre: 'perro',
-    // El Pug de Quaternius no se usa: su GLB solo trae los clips Idle y Jump, sin andar.
     ficheros: [
       'models/perro/Shiba Inu by Quaternius - y4wdQpg767.glb',
       'models/perro/Husky by Quaternius - wcWiuEqwzq.glb'
@@ -265,51 +210,45 @@ const tipos_perseguidor = {
     radio_vision: 12,
     ancho: 0.25,
     alcance: 0.75,
-    altura_lomo: 0.75,     // lomo real 0.88: algo menos para que el salto no sea imposible
+    altura_lomo: 0.75,
     sube_arboles: false,
-    cantidad: 4,
-    color_reserva: 0xc08040
+    cantidad: 4
   }
 };
 const giro_perseguidor = 0.08;
-// ABURRIMIENTO- tras 10 s persiguiendo, el animal se cansa: se queda quieto un momento
-// (comiendo o tumbado), se da la vuelta y pasea. Durante unos segundos no vuelve a
-// fijarse en la rata; despues puede perseguirla otra vez.
+// se aburren de perseguir
 const segundos_max_persecucion = 10;
-const segundos_aburrido = 5;       // sin volver a perseguir
-const segundos_parado_aburrido = 1.5;   // de esos, los primeros quieto
-var aviso_aburrido = 0;            // segundos que queda el mensaje en el HUD
+const segundos_aburrido = 5;
+const segundos_parado_aburrido = 1.5;
+var aviso_aburrido = 0;
 var texto_aburrido = '';
-var aviso_salto = 0;               // igual, para "has saltado por encima de un gato/perro"
+var aviso_salto = 0;
 var texto_salto = '';
 const distancia_atrapar = 0.9;
-const segundos_de_gracia = 6;   // al empezar, los perseguidores tardan un poco en fijarse en la rata
+const segundos_de_gracia = 6;   // al empezar no persiguen
 var perseguidores = [];
-var objectsToCheckPerros = [];  // como el de los gatos, pero con los troncos de los arboles
+var objectsToCheckPerros = [];
 
 // 9- estado del juego
 var juego_terminado = false;
 
 // 10- menu, tiempo limite y records
-var partida_iniciada = false;      // hasta pulsar "Empezar" solo se ve la plaza de fondo
+var partida_iniciada = false;
 var nombre_partida = '';
-var tiempo_partida = 0;            // segundos jugados (no cuenta la pausa ni el menu)
-const tiempo_inicial = 20;         // segundos de margen cuando despiertan gatos y perros
-const tiempo_por_queso = 5;        // cada queso alarga el limite
+var tiempo_partida = 0;
+const tiempo_inicial = 20;
+const tiempo_por_queso = 5;
 var tiempo_restante = tiempo_inicial;
-var aviso_bonus = 0;               // segundos que queda visible el "+5 s"
-var angulo_menu = 0;               // la camara gira alrededor de la plaza en el menu
+var aviso_bonus = 0;
+var angulo_menu = 0;
 const clave_records = 'rata_plaza_records';
 const clave_nombre = 'rata_plaza_nombre';
 const max_records = 10;
-// DIAGNOSTICO- la tecla L alterna el modo ligero: sin sombras ni brillos. Si con el
-// los FPS suben, el cuello de botella esta en el GPU (ventana grande, pantalla retina).
-var modo_ligero = false;
+var modo_ligero = false;   // L: sin sombras ni brillos
 
-// 3- movimiento y camara en tercera persona
-// Copiado y pegado LITERAL de js/s3-cam2.js. Se anaden Shift, espacio, C, P y R como en el Tron.
+// Event listeners para controles (s3-cam2.js)
 document.addEventListener('keydown', (event) => {
-  // En el menu las teclas son para escribir el nombre, no para mover la rata.
+  // en el menu se escribe el nombre
   if (!partida_iniciada)
     return;
 
@@ -334,34 +273,34 @@ document.addEventListener('keydown', (event) => {
     case 'ShiftRight':
       controls.run = true;
       break;
-    // Teclas para tunear el desfase vertical del lookAt.
+    // Q y E: ajuste de la camara
     case 'KeyQ':
       controls.lookAtDown = true;
       break;
     case 'KeyE':
       controls.lookAtUp = true;
       break;
-    // FINAL- la barra espaciadora inicia el salto.
+    // salto
     case 'Space':
       event.preventDefault();
       saltar();
       break;
-    // PAUSA- la tecla P alterna pausa y camara orbital.
+    // pausa
     case 'KeyP':
       if (!event.repeat && !juego_terminado)
         cambiarPausa();
       break;
-    // Reiniciar la partida.
+    // reiniciar
     case 'KeyR':
       if (juego_terminado)
         location.reload();
       break;
-    // RADAR- alterna entre radar (sigue a la rata) y mapa completo.
+    // radar / mapa
     case 'KeyM':
       if (!event.repeat)
         modo_radar = !modo_radar;
       break;
-    // Modo ligero (diagnostico de rendimiento).
+    // modo ligero
     case 'KeyL':
       if (!event.repeat)
         alternarModoLigero();
@@ -369,8 +308,7 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-// DIAGNOSTICO- apaga o enciende las sombras y los brillos (halos y columnas de luz).
-// Cambiar las sombras obliga a recompilar los materiales: tarda un momento.
+// L: apaga las sombras y los brillos
 function alternarModoLigero()
 {
   modo_ligero = !modo_ligero;
@@ -380,13 +318,20 @@ function alternarModoLigero()
     if (objeto.material) objeto.material.needsUpdate = true;
   });
 
-  var brillos = [];
-  escondites.forEach(function(e) { brillos.push(e.halo, e.haz); });
-  arboles.forEach(function(a) { brillos.push(a.halo, a.haz); });
-  quesos.forEach(function(q) { brillos.push(q.halo, q.charco); });
-  brillos.forEach(function(b) { b.visible = !modo_ligero; });
+  for (var i = 0; i < escondites.length; i++) {
+    escondites[i].halo.visible = !modo_ligero;
+    escondites[i].haz.visible = !modo_ligero;
+  }
+  for (var j = 0; j < arboles.length; j++) {
+    arboles[j].halo.visible = !modo_ligero;
+    arboles[j].haz.visible = !modo_ligero;
+  }
+  for (var k = 0; k < quesos.length; k++) {
+    quesos[k].halo.visible = !modo_ligero;
+    quesos[k].charco.visible = !modo_ligero;
+  }
 
-  console.log(modo_ligero ? 'Modo ligero: sin sombras ni brillos' : 'Modo normal');
+  console.log('Modo ligero:', modo_ligero);
 }
 
 document.addEventListener('keyup', (event) => {
@@ -420,7 +365,7 @@ document.addEventListener('keyup', (event) => {
     case 'KeyE':
       controls.lookAtUp = false;
       break;
-    // DEBUG- cambio de camara.
+    // camara orbital
     case 'KeyC':
       if (!juego_pausado)
         cambiarCamara();
@@ -428,7 +373,7 @@ document.addEventListener('keyup', (event) => {
   }
 });
 
-// FINAL- solo se puede iniciar otro salto despues de volver al suelo.
+// salto (Tron)
 function saltar()
 {
   if (rata === null || !en_suelo || juego_pausado || juego_terminado || rata_escondida || rata_en_arbol)
@@ -439,16 +384,13 @@ function saltar()
   cambiarAnimacionRata('Jump');
 }
 
-// 4- colisiones de la rata. El rayo de s3-colisiones.js sale del centro del cuerpo;
-// con uno solo, un bolardo o una farola fina se colaba por un lado. Lanzamos tres,
-// como tres bigotes: centro e izquierda y derecha del cuerpo. Salen a 0.3 de los pies,
-// asi que en el aire pasan por encima de lo bajo y la rata cae encima (ver objetosSuelo).
+// colisiones de la rata: tres rayos (centro y lados)
 const ancho_rata = 0.2;
 const lateral_rayo = new THREE.Vector3();
 const origen_rayo_rata = new THREE.Vector3();
 function caminoLibreRata(direccion, distancia)
 {
-  // Vector perpendicular a la direccion, en el plano del suelo: (z, 0, -x).
+  // vector perpendicular a la direccion
   lateral_rayo.set(direccion.z, 0, -direccion.x).multiplyScalar(ancho_rata);
   raycaster.far = distancia;
   for (var lado = -1; lado <= 1; lado++) {
@@ -461,8 +403,7 @@ function caminoLibreRata(direccion, distancia)
   return true;
 }
 
-// Altura del suelo bajo un punto: rayo hacia abajo lanzado desde un poco por encima
-// de la altura actual (asi un escalon mas alto que ese margen no cuenta como suelo).
+// altura del suelo con un rayo hacia abajo (detectarSuelo del Tron)
 function alturaSuelo(x, z, alturaActual, margen)
 {
   origen_rayo_suelo.set(x, alturaActual + margen, z);
@@ -470,19 +411,18 @@ function alturaSuelo(x, z, alturaActual, margen)
   raycaster_suelo.far = alturaActual + margen + 1;
 
   var impactos = raycaster_suelo.intersectObjects(objetosSuelo, true);
-  return impactos.length > 0 ? impactos[0].point.y : 0;
+  if (impactos.length === 0)
+    return 0;
+  return impactos[0].point.y;
 }
 
-// Copiado de actualizarAlturaJugador() del Tron. En el suelo la rata sigue la altura
-// de lo que tenga debajo (si se sale de una plataforma, cae); en el aire aplica la
-// gravedad y aterriza sobre la primera superficie que encuentra.
+// gravedad y aterrizaje (Tron)
 function actualizarAlturaRata(delta)
 {
   var alturaDebajo = alturaSuelo(pos_rata.x, pos_rata.z, pos_rata.y, altura_escalon_rata);
 
   if (en_suelo) {
     if (pos_rata.y > alturaDebajo + 0.05) {
-      // Ha salido por el borde de una plataforma: empieza a caer.
       en_suelo = false;
       velocidad_vertical = 0;
     } else {
@@ -501,8 +441,7 @@ function actualizarAlturaRata(delta)
   }
 }
 
-// DASH- gasta energia mientras se corre y la recupera cuando no. Devuelve la
-// velocidad que toca este frame.
+// dash: gasta energia y se recarga
 function actualizarDash(delta)
 {
   var quiereCorrer = controls.run && controls.moveForward;
@@ -519,11 +458,12 @@ function actualizarDash(delta)
     energia_dash = Math.min(1, energia_dash + delta / recarga_dash);
   }
 
-  return dash_activo ? controls.speedRun : controls.speed;
+  if (dash_activo)
+    return controls.speedRun;
+  return controls.speed;
 }
 
-// FINAL- inclina sobre el eje longitudinal local y vuelve suavemente al
-// centro cuando se suelta la direccion.
+// la rata se inclina al girar (Tron)
 function actualizarInclinacion(delta)
 {
   let inclinacion_objetivo = 0;
@@ -537,8 +477,6 @@ function actualizarInclinacion(delta)
   inclinacion_actual +=
     (inclinacion_objetivo - inclinacion_actual) * factor;
 
-  // Primero orientamos la rata hacia delante y despues aplicamos el balanceo
-  // alrededor de su propio eje, no alrededor de un eje fijo de la escena.
   rata.rotation.set(0, angulo, 0);
   rata.rotateZ(inclinacion_actual);
 }
@@ -554,25 +492,22 @@ function init()
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(new THREE.Color(0x000000));
   renderer.outputEncoding = THREE.sRGBEncoding;
-  // sombras: 1- habilitar sombras en el renderizador (s5-luces.js)
+  // sombras (s5-luces.js)
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  // RENDIMIENTO- dibujamos dos vistas por frame (principal y minimapa) y, por defecto,
-  // Three.js vuelve a calcular el mapa de sombras en cada render(). Lo calculamos
-  // nosotros una vez por frame (needsUpdate en render()) y el minimapa lo reutiliza.
+  // el mapa de sombras se actualiza en render()
   renderer.shadowMap.autoUpdate = false;
   document.getElementById('container').appendChild(renderer.domElement);
 
   scene = new THREE.Scene();
 
-  // Iluminacion basica incluida en la plantilla del Tron.
+  // Iluminacion basica
   var luzAmbiente = new THREE.AmbientLight(0xffffff, 0.6);
   scene.add(luzAmbiente);
 
   var luzDireccional = new THREE.DirectionalLight(0xffffff, 0.8);
   luzDireccional.position.set(60, 90, -40);
-  // sombras: 2- idem en la luz. La camara de sombras de una luz direccional es
-  // ortografica y por defecto es muy pequena: la ampliamos para cubrir la plaza.
+  // camara de sombras que cubra toda la plaza
   luzDireccional.castShadow = true;
   luzDireccional.shadow.mapSize.width = 2048;
   luzDireccional.shadow.mapSize.height = 2048;
@@ -584,22 +519,15 @@ function init()
   luzDireccional.shadow.camera.far = 250;
   scene.add(luzDireccional);
 
-  // RENDIMIENTO- las dos luces tambien iluminan la capa 1 (la del minimapa), para que
-  // la fuente, las plataformas y el mobiliario no salgan negros en la vista de planta.
+  // las luces tambien en el minimapa (capa 1)
   luzAmbiente.layers.enable(1);
   luzDireccional.layers.enable(1);
 
-  // Nota: antes cada queso tenia una luz puntual (tema 4). En el modelo de Phong cada
-  // luz es un termino mas de la suma que se calcula en CADA pixel de cada material,
-  // asi que 10 luces multiplicaban el trabajo de toda la pantalla. Ahora el charco de
-  // luz se pinta en el suelo con un disco brillante (ver crearQueso).
-
   var aspectRatio = window.innerWidth / window.innerHeight;
   camera = new THREE.PerspectiveCamera(50, aspectRatio, 0.1, 1000);
-  // 1 - Camara adaptada al escenario
   camera.position.set(radio_plaza, 25, radio_plaza);
 
-  // Camara cenital ortografica para el HUD (vista de planta de s3-cam2.js).
+  // camara cenital del minimapa (s3-cam2.js)
   cameraTop = new THREE.OrthographicCamera(
     -alcance_hud / 2,
     alcance_hud / 2,
@@ -609,21 +537,16 @@ function init()
     200
   );
   cameraTop.up.set(0, 0, -1);
-  // RENDIMIENTO- como el HUD del Tron (halo_hud.layers.set(1)), la vista de planta solo
-  // dibuja la capa 1: un suelo esquematico de color plano, las piezas que sirven para
-  // orientarse y los marcadores. Asi no se calcula el suelo con texturas, luces y
-  // sombras en cada pixel del minimapa.
-  cameraTop.layers.set(1);
+  cameraTop.layers.set(1);   // solo ve la capa 1
 
   cameraControls = new THREE.OrbitControls(camera, renderer.domElement);
   cameraControls.target.set(0, 1, 0);
   cameraControls.enableKeys = false;
 
-  // 3- movimiento y camara en tercera persona
-  // La camara pasa a estar controlada por updateCamera().
+  // la camara la mueve updateCamera()
   cameraControls.enabled = false;
 
-  // Monitor de rendimiento (Stats.js, sesion 4). Lo colocamos a la derecha, bajo el HUD.
+  // fps (Stats.js)
   stats = new Stats();
   stats.showPanel(0);   // 0: fps
   stats.domElement.style.left = 'auto';
@@ -634,9 +557,7 @@ function init()
   window.addEventListener('resize', updateAspectRatio);
 }
 
-// SKYBOX- solucion sencilla copiada del Tron: una imagen normal sobre un objeto
-// grande visto desde dentro (BackSide). El Tron usa un cilindro; como nuestra
-// imagen es un panorama de 360 grados, una esfera la envuelve sin deformarla.
+// skybox: esfera con el cielo por dentro (Tron)
 function crearSkybox()
 {
   var texturaSkybox = new THREE.TextureLoader().load('images/cielo.jpg');
@@ -652,28 +573,21 @@ function crearSkybox()
   scene.add(skybox);
 }
 
-// TEXTURA FACHADAS- fachada con ventanas ("Facade 2" de ShareTextures, CC0) en la cara que
-// mira a la plaza (tema 5 y s5-texturas.js). Como cada edificio tiene un alto distinto,
-// cada uno necesita su propio repeat: clonamos la textura (clone() copia las propiedades
-// pero comparte la imagen, que se sube a la tarjeta grafica una sola vez).
-// Los clones se hacen dentro de la funcion que se llama al terminar la carga, como con el
-// GLTFLoader. Si la imagen no carga, los edificios se quedan con su color liso.
+// textura de las fachadas (s5-texturas.js)
 function ponerTexturaFachadas(fachadas)
 {
   var cargador = new THREE.TextureLoader();
-  // Tintes claros: el color del material se multiplica por el de la foto
-  // (diffuseColor del tema 4-5), asi una sola foto da edificios de colores distintos.
+  // tintes para que no sean todas iguales
   var tintes = [0xffffff, 0xffc8b0, 0xd6dae2, 0xfff0c0, 0xe6c2b4, 0xd0d8c8];
 
   cargador.load('images/fachada_diff_1k.jpg', function (texturaFachada) {
     cargador.load('images/fachada_nor_gl_1k.jpg', function (normalesFachada) {
-      texturaFachada.encoding = THREE.sRGBEncoding;    // es una foto en color, como el suelo
+      texturaFachada.encoding = THREE.sRGBEncoding;
       texturaFachada.wrapS = THREE.RepeatWrapping;
       texturaFachada.wrapT = THREE.RepeatWrapping;
       normalesFachada.wrapS = THREE.RepeatWrapping;
       normalesFachada.wrapT = THREE.RepeatWrapping;
-      // Filtrado anisotropico (tema 5, diapositiva 20): las fachadas casi siempre se ven
-      // muy de lado y sin el las ventanas lejanas se emborronan.
+      // filtrado anisotropico (tema 5)
       texturaFachada.anisotropy = renderer.capabilities.getMaxAnisotropy();
       normalesFachada.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
@@ -682,11 +596,9 @@ function ponerTexturaFachadas(fachadas)
         var ancho = fachada.geometry.parameters.width;
         var alto = fachada.geometry.parameters.height;
 
-        // Una copia de la foto a lo ancho (3 columnas de ventanas sin cortar) y a lo
-        // alto las que quepan sin deformarla: la foto es cuadrada.
+        // una copia a lo ancho y las que quepan a lo alto
         var repeticionesAlto = alto / ancho;
-        // offset: desplaza la textura para que la cornisa (arriba de la foto) quede justo
-        // en el tejado y no a media altura del edificio.
+        // la cornisa arriba del todo
         var desplazamiento = Math.ceil(repeticionesAlto) - repeticionesAlto;
 
         var mapa = texturaFachada.clone();
@@ -698,9 +610,9 @@ function ponerTexturaFachadas(fachadas)
 
         var frente = fachada.material[4];
         frente.map = mapa;
-        frente.normalMap = relieve;      // relieve de marcos y repisas sin mas poligonos
+        frente.normalMap = relieve;
         frente.color.set(tintes[i % tintes.length]);
-        frente.needsUpdate = true;       // al anadir mapas el shader cambia y hay que recompilarlo
+        frente.needsUpdate = true;   // hay que recompilar el shader
       }
     });
   });
@@ -708,16 +620,14 @@ function ponerTexturaFachadas(fachadas)
 
 function loadScene()
 {
-  // 1 - ESCENARIO
 
+  // 1- escenario
   crearSkybox();
 
-  // Suelo circular de la plaza. CircleGeometry se crea en vertical, por eso lo giramos.
+  // suelo
   var geometriaSuelo = new THREE.CircleGeometry(radio_plaza, 128);
 
-  // TEXTURA SUELO- adoquines de Poly Haven. Repetimos la textura para no
-  // estirar una sola copia sobre toda la plaza (s5-texturas.js). Una baldosa
-  // cada 4 unidades: el diametro entre 4.
+  // textura del suelo: una baldosa cada 4 (s5-texturas.js)
   var repeticiones = radio_plaza * 2 / 4;
   var texturaSuelo = new THREE.TextureLoader().load(
     'images/cobblestone_pavement_diff_1k.jpg'
@@ -727,7 +637,7 @@ function loadScene()
   texturaSuelo.repeat.set(repeticiones, repeticiones);
   texturaSuelo.encoding = THREE.sRGBEncoding;
 
-  // El mapa de normales da relieve a los adoquines sin anadir poligonos (tema 5).
+  // mapa de normales (tema 5)
   var normalesSuelo = new THREE.TextureLoader().load(
     'images/cobblestone_pavement_nor_gl_1k.jpg'
   );
@@ -740,7 +650,7 @@ function loadScene()
     normalMap: normalesSuelo,
     shininess: 10
   });
-  // Suelo esquematico del minimapa (solo capa 1): material basico, sin luces ni sombras.
+  // suelo del minimapa (capa 1)
   var sueloMapa = new THREE.Mesh(
     new THREE.CircleGeometry(radio_plaza, 64),
     new THREE.MeshBasicMaterial({ color: 0x77716a })
@@ -761,7 +671,7 @@ function loadScene()
   suelo.receiveShadow = true;
   scene.add(suelo);
 
-  // Acera: una corona circular gris entre el bordillo y las fachadas.
+  // acera
   var geometriaAcera = new THREE.RingGeometry(radio_plaza, radio_acera, 128, 1);
   var materialAcera = new THREE.MeshPhongMaterial({ color: 0x8a8580 });
   var acera = new THREE.Mesh(geometriaAcera, materialAcera);
@@ -770,7 +680,7 @@ function loadScene()
   acera.receiveShadow = true;
   scene.add(acera);
 
-  // Asfalto exterior para que no se vea el vacio detras de las fachadas.
+  // asfalto de fuera
   var asfalto = new THREE.Mesh(
     new THREE.PlaneGeometry(radio_fachadas * 6, radio_fachadas * 6),
     new THREE.MeshPhongMaterial({ color: 0x454545 })
@@ -779,7 +689,7 @@ function loadScene()
   asfalto.position.y = -0.02;
   scene.add(asfalto);
 
-  // Bordillo: un anillo (circulo con agujero) extruido, como las paredes del Tron.
+  // bordillo: anillo extruido
   var perfilBordillo = new THREE.Shape();
   perfilBordillo.absarc(0, 0, radio_plaza + 0.5, 0, Math.PI * 2, false);
   var agujeroBordillo = new THREE.Path();
@@ -800,7 +710,7 @@ function loadScene()
   bordillo.receiveShadow = true;
   scene.add(bordillo);
 
-  // Fachadas: 30 posiciones separadas por 2 PI / 30, como la pared del Tron.
+  // fachadas: 30 edificios en circulo (como la pared del Tron)
   var fachadas = new THREE.Group();
   var cantidadTramos = 30;
   var pasoAngular = Math.PI * 2 / cantidadTramos;
@@ -809,13 +719,10 @@ function loadScene()
 
   for (var tramo = 0; tramo < cantidadTramos; tramo++) {
     var anguloFachada = tramo * pasoAngular;
-    var altoFachada = 10 + (tramo * 7) % 11;     // alturas distintas pero siempre iguales
+    var altoFachada = 10 + (tramo * 7) % 11;   // alturas distintas
     var fondoFachada = 9;
 
-    // MATERIALES POR CARA- como el cubo de s5-texturas.js: un array de 6 materiales en el
-    // orden de BoxGeometry (+X, -X, +Y, -Y, +Z, -Z). Las paredes laterales y el tejado son
-    // de color liso; la cara +Z (indice 4), la que mira a la plaza despues del lookAt,
-    // recibe la foto de la fachada cuando termina de cargar (ponerTexturaFachadas).
+    // un material por cara, la foto solo mirando a la plaza (s5-texturas.js)
     var colorPared = coloresFachada[tramo % coloresFachada.length];
     var materialPared = new THREE.MeshLambertMaterial({ color: colorPared });
     var materialFrente = new THREE.MeshPhongMaterial({ color: colorPared, shininess: 5 });
@@ -836,8 +743,7 @@ function loadScene()
   scene.add(fachadas);
   ponerTexturaFachadas(fachadas);
 
-  // Limite invisible de la plaza. Copiado del Tron: conservamos un cilindro
-  // completo para las colisiones; el bordillo es la representacion visible.
+  // limite invisible de la plaza (Tron)
   var altoLimite = 10;
   var limitePlaza = new THREE.Mesh(
     new THREE.CylinderGeometry(radio_plaza - 0.3, radio_plaza - 0.3, altoLimite, 64, 1, true),
@@ -846,7 +752,7 @@ function loadScene()
   limitePlaza.position.y = altoLimite / 2;
   scene.add(limitePlaza);
 
-  // Texturas de los brillos (se usan en quesos y escondites).
+  // texturas de los brillos
   textura_halo = crearTexturaHalo();
   textura_haz = crearTexturaHaz();
 
@@ -854,7 +760,7 @@ function loadScene()
   zonas_ocupadas.push({ x: 0, z: 0, radio: 7.2 });
   var farolas = crearFarolas();
 
-  // 7- escondites: ocho alcantarillas en un anillo exterior y dos cerca del centro.
+  // 7- alcantarillas
   for (var i = 0; i < 8; i++) {
     var anguloAlcantarilla = i * Math.PI / 4;
     crearEscondite(Math.cos(anguloAlcantarilla) * 30, Math.sin(anguloAlcantarilla) * 30);
@@ -862,7 +768,7 @@ function loadScene()
   crearEscondite(12, 0);
   crearEscondite(-12, 0);
 
-  // 7b- arboles: seis en un anillo intermedio y dos en el eje Z.
+  // 7b- arboles
   troncos = new THREE.Group();
   scene.add(troncos);
   for (var i = 0; i < 6; i++) {
@@ -872,22 +778,19 @@ function loadScene()
   crearArbol(0, 36);
   crearArbol(0, -36);
 
-  // RADAR- anillos fijos en el minimapa para cada escondite (los halos quedan debajo
-  // de las copas de los arboles y desde arriba no se verian).
+  // escondites en el minimapa
   for (var e = 0; e < escondites.length; e++)
     crearMarcadorEscondite(0x33ff88, escondites[e].pos.x, escondites[e].pos.z);
   for (var a = 0; a < arboles.length; a++)
     crearMarcadorEscondite(0xffb347, arboles[a].pos.x, arboles[a].pos.z);
 
-  // 1b- mobiliario: terraza, papeleras, jardineras y bolardos.
+  // mobiliario
   crearObstaculos();
 
   bloqueo_grandes = new THREE.Group();
   scene.add(bloqueo_grandes);
 
-  // 7c- plataformas: el escalon de la fuente, cuatro parterres en las diagonales
-  // y seis bancos en el anillo exterior, mirando a la fuente. Con rotation.y = -a - PI/2
-  // el lado largo queda tangente al anillo y el frente (+Z local) apunta al centro.
+  // 7c- plataformas: escalon, parterres y bancos
   grupo_plataformas = new THREE.Group();
   scene.add(grupo_plataformas);
   crearEscalonFuente();
@@ -899,42 +802,30 @@ function loadScene()
     var anguloBanco = Math.PI / 6 + b * Math.PI / 3;
     crearBanco(Math.cos(anguloBanco) * 38, Math.sin(anguloBanco) * 38, -anguloBanco - Math.PI / 2);
   }
-  // Todo lo solido es tambien suelo para la rata: si salta por encima del borde de la
-  // fuente, una papelera o una mesa, cae ENCIMA y no dentro (antes solo lo eran las
-  // plataformas, y la rata acababa metida en el agua de la fuente).
+  // la rata puede caer encima de todo esto
   objetosSuelo.push(grupo_plataformas, fuente, obstaculos);
 
-  // Lo que ayuda a orientarse tambien se dibuja en el minimapa (capa 1 ademas de la 0).
+  // tambien en el minimapa
   mostrarEnMapa(fuente);
   mostrarEnMapa(grupo_plataformas);
   mostrarEnMapa(obstaculos);
 
-  // 4- colisiones de la rata, de las personas, de los gatos y de los perros.
-  // La rata y los gatos pasan junto a los troncos (suben); personas y perros los rodean.
-  // El mobiliario frena a todo el mundo. Las plataformas frenan a todos menos a los
-  // gatos (trepan) y a la rata cuando va por el aire, que pasa por encima del borde.
+  // 4- listas de colisiones
   objectsToCheck.push(limitePlaza, fuente, farolas, obstaculos, grupo_plataformas);
-  // Personas y animales no lanzan rayos contra el cilindro del limite: el borde es un
-  // circulo y su distancia se calcula con una formula (ver distanciaAlBorde).
   objectsToCheckIA.push(fuente, farolas, troncos, obstaculos, grupo_plataformas, bloqueo_grandes);
   objectsToCheckGatos.push(fuente, farolas, obstaculos);
   objectsToCheckPerros.push(fuente, farolas, troncos, obstaculos, grupo_plataformas, bloqueo_grandes);
 
-  // Marcador de la rata para la vista de planta: la esfera de 3 facetas con forma
-  // de flecha de s3-colisiones.js. Solo se hace visible al dibujar el HUD.
   marcador_rata = crearMarcadorRata();
 
-  // 6- quesos: material compartido por todos los quesos.
+  // 6- material de los quesos
   material_queso = new THREE.MeshPhongMaterial({
     color: 0xffd400,
-    emissive: 0xaa7700,     // brilla aunque no le de la luz
+    emissive: 0xaa7700,   // brilla sin luz
     shininess: 60
   });
 
-  // RENDIMIENTO- compilar los shaders de todo lo que ya esta en la escena ahora, al
-  // cargar, en vez de la primera vez que algo entra en pantalla en mitad de la partida
-  // (cada programa nuevo congela el juego decimas de segundo). Para que el queso y su
-  // halo tambien queden compilados, creamos uno de prueba y lo quitamos.
+  // queso de prueba para compilar sus shaders al cargar
   var quesoPrueba = crearQueso(0, 0, -50);
   compilarShaders();
   scene.remove(quesoPrueba.modelo);
@@ -944,32 +835,29 @@ function loadScene()
   // 2- rata
   loadRata();
 
-  // 5- personas: repartidas en ocho angulos, lejos del eje -Z donde empieza la rata.
+  // 5- personas
   for (var i = 0; i < ficheros_personas.length; i++) {
     loadPersona(ficheros_personas[i], Math.PI / 8 + i * Math.PI / 4);
   }
 
-  // 8- perseguidores: cuatro gatos y cuatro perros repartidos por el borde, alternando
-  // tipos. El de cada tipo coge su fichero y su tinte por turno.
+  // 8- gatos y perros, alternados
   var totalPerseguidores = tipos_perseguidor.gato.cantidad + tipos_perseguidor.perro.cantidad;
   for (var k = 0; k < totalPerseguidores; k++) {
-    var nombreTipo = (k % 2 === 0) ? 'gato' : 'perro';
+    var nombreTipo = 'perro';
+    if (k % 2 === 0)
+      nombreTipo = 'gato';
     var indice = Math.floor(k / 2);
     loadPerseguidor(nombreTipo, indice, Math.PI / 9 + k * Math.PI * 2 / totalPerseguidores);
   }
 }
 
-// RENDIMIENTO- pide a Three.js que compile los programas de todos los materiales de
-// la escena (visibles o no) con las luces actuales. Se llama al montar el escenario y
-// cada vez que termina de cargarse un modelo.
+// compila los shaders al cargar (si no, tirones al jugar)
 function compilarShaders()
 {
   renderer.compile(scene, camera);
 }
 
-// Cilindro de colision invisible para personas y gatos (como el limite del Tron).
-// Las mallas con esqueleto tienen miles de triangulos; lanzar rayos contra un
-// cilindro de 8 lados es mucho mas barato.
+// cilindro invisible para las colisiones (Tron)
 function crearColisionador(radio, alto)
 {
   var colisionador = new THREE.Mesh(
@@ -981,13 +869,13 @@ function crearColisionador(radio, alto)
   return colisionador;
 }
 
-// Fuente central hecha con cilindros: pilon, pedestal, taza y agua.
+// fuente con cilindros
 function crearFuente()
 {
   fuente = new THREE.Group();
 
   var materialPiedra = new THREE.MeshPhongMaterial({ color: 0xa39e93 });
-  // Agua: brillo especular concentrado (shininess alto) y algo transparente.
+  // agua brillante
   var materialAgua = new THREE.MeshPhongMaterial({
     color: 0x3a7ca5,
     specular: 0xffffff,
@@ -1040,14 +928,12 @@ function crearFuente()
       objeto.receiveShadow = true;
     }
   });
-  // La fuente descansa sobre el escalon circular (plataforma de 0.5).
-  fuente.position.y = 0.5;
+  fuente.position.y = 0.5;   // encima del escalon
   scene.add(fuente);
 }
 
 // 7c- plataformas
-// Escalon de piedra alrededor de la fuente: la rata y los gatos suben de un salto,
-// personas y perros lo rodean.
+// escalon de la fuente
 function crearEscalonFuente()
 {
   var escalon = new THREE.Mesh(
@@ -1061,7 +947,7 @@ function crearEscalonFuente()
   plataformas.push({ tipo: 'anillo', x: 0, z: 0, radioInterior: 5.0, radioExterior: 6.2, altura: 0.5 });
 }
 
-// Parterre elevado: caja de piedra con cesped encima y un seto en cada extremo.
+// parterre con cesped
 function crearParterre(x, z, anguloY)
 {
   var parterre = new THREE.Group();
@@ -1101,7 +987,7 @@ function crearParterre(x, z, anguloY)
   zonas_ocupadas.push({ x: x, z: z, radio: 4 });
 }
 
-// Banco de madera: la rata salta al asiento; por debajo, entre las patas, pasa andando.
+// banco: la rata salta encima o pasa por debajo
 function crearBanco(x, z, anguloY)
 {
   var banco = new THREE.Group();
@@ -1131,7 +1017,7 @@ function crearBanco(x, z, anguloY)
   banco.rotation.y = anguloY;
   grupo_plataformas.add(banco);
 
-  // Caja invisible del tamano del banco, solo para personas y perros.
+  // caja invisible solo para personas y perros
   var caja = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.9, 0.6), material_invisible);
   caja.position.set(x, 0.45, z);
   caja.rotation.y = anguloY;
@@ -1140,7 +1026,7 @@ function crearBanco(x, z, anguloY)
   zonas_ocupadas.push({ x: x, z: z, radio: 1.5 });
 }
 
-// Punto al azar encima de una plataforma, para los quesos. Devuelve {x, z, altura}.
+// punto al azar encima de una plataforma
 function puntoSobrePlataforma(plataforma)
 {
   if (plataforma.tipo === 'anillo') {
@@ -1148,7 +1034,7 @@ function puntoSobrePlataforma(plataforma)
     var r = plataforma.radioInterior + Math.random() * (plataforma.radioExterior - plataforma.radioInterior);
     return { x: Math.cos(a) * r, z: Math.sin(a) * r, altura: plataforma.altura };
   }
-  // Caja girada: punto en coordenadas locales y giro Ry (tema 3): x' = x cos a + z sin a, z' = -x sin a + z cos a
+  // giro en Y (tema 3)
   var lx = (Math.random() - 0.5) * plataforma.ancho;
   var lz = (Math.random() - 0.5) * plataforma.fondo;
   var cosA = Math.cos(plataforma.angulo), sinA = Math.sin(plataforma.angulo);
@@ -1159,7 +1045,7 @@ function puntoSobrePlataforma(plataforma)
   };
 }
 
-// Dieciseis farolas sobre una circunferencia, desfasadas respecto a las fachadas.
+// farolas
 function crearFarolas()
 {
   var farolas = new THREE.Group();
@@ -1193,49 +1079,43 @@ function crearFarolas()
   return farolas;
 }
 
-// 1b- mobiliario con primitivas. Todo cuelga del grupo 'obstaculos', que esta en
-// las listas de colision de la rata, las personas y los animales.
+// 1b- mobiliario
 function crearObstaculos()
 {
   obstaculos = new THREE.Group();
   scene.add(obstaculos);
 
-  // Terraza de un bar: cinco mesas redondas con dos sillas cada una, en un sector
-  // entre las alcantarillas (radio 30) y las papeleras (radio 41), de 195 a 255 grados.
+  // terraza: mesas con dos sillas
   for (var i = 0; i < 5; i++) {
     var anguloMesa = THREE.MathUtils.degToRad(195 + i * 15);
     var xMesa = Math.cos(anguloMesa) * 34;
     var zMesa = Math.sin(anguloMesa) * 34;
     crearMesa(xMesa, zMesa);
-    // Las sillas, una a cada lado de la mesa, mirando hacia ella.
     var lateral = anguloMesa + Math.PI / 2;
     crearSilla(xMesa + Math.cos(lateral) * 1.2, zMesa + Math.sin(lateral) * 1.2, lateral + Math.PI);
     crearSilla(xMesa - Math.cos(lateral) * 1.2, zMesa - Math.sin(lateral) * 1.2, lateral);
   }
 
-  // Papeleras: junto a una de cada dos farolas, un poco hacia el centro.
+  // papeleras
   for (var j = 0; j < 16; j += 2) {
     var anguloPapelera = Math.PI / 16 + j * Math.PI * 2 / 16;
     crearPapelera(Math.cos(anguloPapelera) * (radio_plaza - 4.2), Math.sin(anguloPapelera) * (radio_plaza - 4.2));
   }
 
-  // Jardineras: seis en el anillo de los arboles, entre arbol y arbol.
+  // jardineras
   for (var k = 0; k < 6; k++) {
     var anguloJardinera = k * Math.PI / 3;
     crearJardinera(Math.cos(anguloJardinera) * 24, Math.sin(anguloJardinera) * 24, anguloJardinera);
   }
 
-  // Bolardos: un anillo de doce alrededor de la fuente, con hueco para pasar entre ellos.
-  // A radio 9.5 dejan un pasillo de 2.7 con el escalon (antes, a 7.5, el pasillo era tan
-  // estrecho que un perro podia quedar encajado sin poder girar).
+  // bolardos alrededor de la fuente
   for (var m = 0; m < 12; m++) {
     var anguloBolardo = m * Math.PI / 6;
     crearBolardo(Math.cos(anguloBolardo) * 9.5, Math.sin(anguloBolardo) * 9.5);
   }
 }
 
-// Caja invisible para que los rayos choquen con sillas y mesas aunque pasen entre
-// las patas (misma idea que el limite invisible del Tron).
+// caja invisible para que los rayos no pasen entre las patas
 function crearCajaInvisible(x, z, ancho, alto, fondo, anguloY)
 {
   var caja = new THREE.Mesh(new THREE.BoxGeometry(ancho, alto, fondo), material_invisible);
@@ -1328,7 +1208,7 @@ function crearJardinera(x, z, anguloY)
 
   jardinera.traverse(function(objeto) { if (objeto.isMesh) objeto.castShadow = true; });
   jardinera.position.set(x, 0, z);
-  jardinera.rotation.y = -anguloY - Math.PI / 2;   // tangente al anillo (eje X local perpendicular al radio)
+  jardinera.rotation.y = -anguloY - Math.PI / 2;   // tangente al anillo
   obstaculos.add(jardinera);
   zonas_ocupadas.push({ x: x, z: z, radio: 1.8 });
 }
@@ -1345,15 +1225,13 @@ function crearBolardo(x, z)
   zonas_ocupadas.push({ x: x, z: z, radio: 0.6 });
 }
 
-// 7- escondites
-// Una alcantarilla: agujero negro en el suelo, rejilla de barras, aro metalico y
-// un anillo brillante alrededor. La rata baja por la rejilla; los gatos no caben.
+// 7- escondites: alcantarilla
 function crearEscondite(x, z)
 {
   var alcantarilla = new THREE.Group();
   var materialMetal = new THREE.MeshPhongMaterial({ color: 0x4a4a4a, specular: 0x888888, shininess: 40 });
 
-  // Agujero: un circulo negro que no refleja luz.
+  // agujero
   var agujero = new THREE.Mesh(
     new THREE.CircleGeometry(0.9, 24),
     new THREE.MeshBasicMaterial({ color: 0x050505 })
@@ -1362,13 +1240,13 @@ function crearEscondite(x, z)
   agujero.position.y = 0.01;
   alcantarilla.add(agujero);
 
-  // Aro: un toro tumbado.
+  // aro
   var aro = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.08, 8, 32), materialMetal);
   aro.rotation.x = Math.PI / 2;
   aro.position.y = 0.04;
   alcantarilla.add(aro);
 
-  // Rejilla: cinco barras cuya longitud es la cuerda del circulo en esa posicion.
+  // rejilla
   for (var bx = -0.6; bx <= 0.61; bx += 0.3) {
     var cuerda = 2 * Math.sqrt(0.81 - bx * bx) - 0.1;
     var barra = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.05, cuerda), materialMetal);
@@ -1376,8 +1254,7 @@ function crearEscondite(x, z)
     alcantarilla.add(barra);
   }
 
-  // Anillo brillante: material basico (no le afecta la luz) con mezcla aditiva,
-  // igual que los halos del Tron, y transparente para que se vea el suelo.
+  // anillo brillante (aditivo, como los halos del Tron)
   var anillo = new THREE.Mesh(
     new THREE.RingGeometry(radio_escondite + 0.05, radio_escondite + 0.4, 48),
     new THREE.MeshBasicMaterial({
@@ -1392,7 +1269,7 @@ function crearEscondite(x, z)
   anillo.position.y = 0.02;
   alcantarilla.add(anillo);
 
-  // Brillo como el de los quesos: halo en el suelo y columna de luz verde.
+  // halo y columna de luz
   var halo = crearHaloSuelo(0x33ff88, 3.2);
   alcantarilla.add(halo);
   var haz = crearHaz(0x33ff88, 0.8, 4);
@@ -1405,9 +1282,7 @@ function crearEscondite(x, z)
   zonas_ocupadas.push({ x: x, z: z, radio: 2.5 });
 }
 
-// 7b- arboles
-// Un arbol: tronco (cilindro) y copa (tres esferas), con un anillo naranja alrededor.
-// La rata y el gato trepan por el tronco; el perro se queda abajo y pierde el rastro.
+// 7b- arboles: tronco y copa
 function crearArbol(x, z)
 {
   var arbol = new THREE.Group();
@@ -1417,11 +1292,12 @@ function crearArbol(x, z)
   var tronco = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, 2.6, 12), materialTronco);
   tronco.position.y = 1.3;
   tronco.castShadow = true;
-  // El tronco va en su propio grupo porque es obstaculo para personas y perros.
+  // el tronco va aparte: es un obstaculo
   tronco.position.x = x;
   tronco.position.z = z;
   troncos.add(tronco);
 
+  // copa: tres esferas
   var copas = [[0, 3.6, 0, 1.6], [0.9, 3.0, 0.5, 1.1], [-0.8, 3.1, -0.6, 1.0]];
   for (var i = 0; i < copas.length; i++) {
     var copa = new THREE.Mesh(new THREE.SphereGeometry(copas[i][3], 16, 12), materialCopa);
@@ -1430,7 +1306,7 @@ function crearArbol(x, z)
     arbol.add(copa);
   }
 
-  // Anillo brillante naranja, para distinguirlo del verde de las alcantarillas.
+  // anillo naranja
   var anillo = new THREE.Mesh(
     new THREE.RingGeometry(radio_arbol + 0.05, radio_arbol + 0.4, 48),
     new THREE.MeshBasicMaterial({
@@ -1445,7 +1321,7 @@ function crearArbol(x, z)
   anillo.position.y = 0.02;
   arbol.add(anillo);
 
-  // Brillo naranja: halo en la base del tronco y columna de luz hasta la copa.
+  // halo y columna de luz
   var halo = crearHaloSuelo(0xffb347, 3.2);
   arbol.add(halo);
   var haz = crearHaz(0xffb347, 0.7, 2.4);
@@ -1459,8 +1335,7 @@ function crearArbol(x, z)
 }
 
 // 6- quesos
-// Textura con un degradado radial para el halo. Es la misma idea que el circulo
-// con gradiente que dibujamos con gl_PointCoord en la sesion 1, pero en un canvas.
+// textura con un degradado para los halos
 function crearTexturaHalo()
 {
   var canvas = document.createElement('canvas');
@@ -1476,7 +1351,7 @@ function crearTexturaHalo()
   return new THREE.CanvasTexture(canvas);
 }
 
-// Degradado vertical para las columnas de luz: opaco abajo y transparente arriba.
+// degradado vertical para las columnas de luz
 function crearTexturaHaz()
 {
   var canvas = document.createElement('canvas');
@@ -1491,7 +1366,7 @@ function crearTexturaHaz()
   return new THREE.CanvasTexture(canvas);
 }
 
-// Halo en el suelo: el mismo sprite aditivo que llevan los quesos, mas grande.
+// halo en el suelo
 function crearHaloSuelo(color, escala)
 {
   var halo = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -1506,8 +1381,7 @@ function crearHaloSuelo(color, escala)
   return halo;
 }
 
-// Columna de luz: un cilindro abierto, aditivo, con el degradado que se apaga hacia arriba.
-// Sirve para localizar los escondites desde lejos en una plaza tan grande.
+// columna de luz
 function crearHaz(color, radio, alto)
 {
   var haz = new THREE.Mesh(
@@ -1526,15 +1400,13 @@ function crearHaz(color, radio, alto)
   return haz;
 }
 
-// RADAR- piezas de los marcadores de la vista de planta.
-// Flecha plana: Shape en el plano XY con la punta en +Y y una muesca detras. Al girarla
-// 90 grados sobre X la punta queda hacia +Z, que es "delante" para la rata y los demas.
+// minimapa: flecha
 function geometriaFlecha(radio)
 {
   var forma = new THREE.Shape();
-  forma.moveTo(0, radio);                       // punta
+  forma.moveTo(0, radio);   // punta
   forma.lineTo(radio * 0.75, -radio * 0.7);
-  forma.lineTo(0, -radio * 0.3);                // muesca
+  forma.lineTo(0, -radio * 0.3);
   forma.lineTo(-radio * 0.75, -radio * 0.7);
   forma.closePath();
   var geometria = new THREE.ShapeGeometry(forma);
@@ -1549,8 +1421,7 @@ function geometriaDisco(radio)
   return geometria;
 }
 
-// Material de marcador: sin prueba de profundidad y dibujado al final (renderOrder alto),
-// asi se ve siempre por encima de copas de arboles, farolas o halos.
+// siempre por encima de todo en el minimapa
 function mallaMarcador(geometria, color, orden)
 {
   var malla = new THREE.Mesh(geometria, new THREE.MeshBasicMaterial({
@@ -1564,7 +1435,7 @@ function mallaMarcador(geometria, color, orden)
   return malla;
 }
 
-// Las capas no se heredan: hay que activarlas en cada malla del grupo.
+// lo pone tambien en la capa 1 (minimapa)
 function mostrarEnMapa(objeto)
 {
   objeto.traverse(function(hijo) { hijo.layers.enable(1); });
@@ -1573,14 +1444,14 @@ function mostrarEnMapa(objeto)
 function anadirMarcador(marcador)
 {
   marcador.position.y = 3;
-  // Los marcadores solo estan en la capa 1: la camara principal no los ve nunca.
+  // solo en la capa 1
   marcador.traverse(function(hijo) { hijo.layers.set(1); });
   scene.add(marcador);
   marcadores.push(marcador);
   return marcador;
 }
 
-// Flecha de color con borde negro para lo que se mueve (rata, personas, animales).
+// flecha con borde negro
 function crearMarcador(color, radio)
 {
   var marcador = new THREE.Group();
@@ -1589,11 +1460,10 @@ function crearMarcador(color, radio)
   return anadirMarcador(marcador);
 }
 
-// La rata ademas lleva un abanico claro delante: hacia donde va y lo que ve la camara.
+// la rata lleva un abanico delante
 function crearMarcadorRata()
 {
   var marcador = crearMarcador(color_marcador.rata, 2.1);
-  // Sector circular de 60 grados centrado en +Y antes de girarlo (+Z despues).
   var abanico = new THREE.CircleGeometry(7, 16, Math.PI / 3, Math.PI / 3);
   abanico.rotateX(Math.PI / 2);
   var malla = mallaMarcador(abanico, 0xffffff, 15);
@@ -1604,8 +1474,7 @@ function crearMarcadorRata()
   return marcador;
 }
 
-// Queso: disco amarillo con borde negro. Si esta fuera del radar se cambia por una
-// flecha en el borde que apunta hacia el.
+// queso: disco, o flecha si esta lejos
 function crearMarcadorQueso()
 {
   var marcador = new THREE.Group();
@@ -1622,7 +1491,6 @@ function crearMarcadorQueso()
   return anadirMarcador(marcador);
 }
 
-// Escondite: anillo verde (alcantarilla) o naranja (arbol), fijo en su sitio.
 function crearMarcadorEscondite(color, x, z)
 {
   var anillo = new THREE.RingGeometry(1.0, 1.6, 24);
@@ -1642,8 +1510,7 @@ function quitarMarcador(marcador)
     marcadores.splice(indice, 1);
 }
 
-// Coloca cada marcador sobre su dueno, apuntando hacia donde mira. El tamano depende
-// de cuanto abarca el mapa, para que se vean igual en el radar y en el mapa completo.
+// coloca los marcadores del minimapa
 function actualizarMarcadores(radar)
 {
   var escala = alcance_mapa_actual / alcance_radar;
@@ -1651,7 +1518,7 @@ function actualizarMarcadores(radar)
     marcadores[m].scale.setScalar(escala);
 
   marcador_rata.position.set(pos_rata.x, 3, pos_rata.z);
-  marcador_rata.rotation.y = angulo;            // la punta de la flecha va hacia +Z
+  marcador_rata.rotation.y = angulo;
   marcador_rata.userData.abanico.visible = radar;
 
   for (var i = 0; i < personas.length; i++) {
@@ -1663,8 +1530,7 @@ function actualizarMarcadores(radar)
     perseguidores[j].marcador.rotation.y = perseguidores[j].angulo;
   }
 
-  // Quesos: en el radar, los que quedan fuera se dibujan como flecha en el borde,
-  // en la direccion del queso, para saber hacia donde ir a buscarlo.
+  // quesos fuera del radar: flecha en el borde
   var limite = alcance_radar * 0.44;
   for (var k = 0; k < quesos.length; k++) {
     var marcador = quesos[k].marcador;
@@ -1685,7 +1551,6 @@ function actualizarMarcadores(radar)
   }
 }
 
-// Distancia de la rata al queso mas cercano (para el texto del radar).
 function distanciaQuesoMasCercano()
 {
   var minima = Infinity;
@@ -1695,8 +1560,7 @@ function distanciaQuesoMasCercano()
   return minima;
 }
 
-// Un queso es una cuna (prisma triangular: cilindro de 3 lados) con un halo
-// (sprite aditivo que siempre mira a la camara) y un charco de luz en el suelo.
+// queso: cuna, halo y charco de luz
 function crearQueso(x, z, alturaBase)
 {
   var queso = new THREE.Group();
@@ -1721,8 +1585,7 @@ function crearQueso(x, z, alturaBase)
   queso.position.set(x, alturaBase + 0.25, z);
   scene.add(queso);
 
-  // Charco de luz: un plano tumbado en el suelo con la misma textura de degradado que
-  // el halo y mezcla aditiva. Da el efecto de una luz puntual sin calcular ninguna luz.
+  // charco de luz en el suelo (sin luz de verdad)
   var charco = new THREE.Mesh(
     new THREE.PlaneGeometry(2.6, 2.6),
     new THREE.MeshBasicMaterial({
@@ -1748,8 +1611,7 @@ function crearQueso(x, z, alturaBase)
   };
 }
 
-// Posicion aleatoria para un queso. Uno de cada tres aparece encima de una plataforma
-// (asi el salto sirve para algo); el resto en el suelo, lejos de todo lo que ocupa sitio.
+// sitio al azar (a veces encima de una plataforma)
 function posicionAleatoriaQueso()
 {
   if (plataformas.length > 0 && Math.random() < 0.35) {
@@ -1761,7 +1623,7 @@ function posicionAleatoriaQueso()
   var radioMinimo = 9, radioMaximo = radio_plaza - 4;
   for (var intento = 0; intento < 30; intento++) {
     var anguloQueso = Math.random() * Math.PI * 2;
-    // Reparto uniforme en la corona: con sqrt no se amontonan en el centro.
+    // con sqrt no se juntan en el centro
     var radioQueso = Math.sqrt(
       Math.random() * (radioMaximo * radioMaximo - radioMinimo * radioMinimo) +
       radioMinimo * radioMinimo
@@ -1769,7 +1631,7 @@ function posicionAleatoriaQueso()
     var x = Math.cos(anguloQueso) * radioQueso;
     var z = Math.sin(anguloQueso) * radioQueso;
 
-    // No vale encima de nada: fuente, farolas, alcantarillas, arboles ni mobiliario.
+    // que no caiga encima de nada
     var valido = true;
     for (var i = 0; i < zonas_ocupadas.length; i++) {
       var zona = zonas_ocupadas[i];
@@ -1784,7 +1646,7 @@ function posicionAleatoriaQueso()
 
 function actualizarQuesos(delta)
 {
-  // Van apareciendo cada pocos segundos hasta un maximo.
+  // sale uno nuevo cada poco
   tiempo_hasta_queso -= delta;
   if (tiempo_hasta_queso <= 0 && quesos.length < max_quesos) {
     var posicion = posicionAleatoriaQueso();
@@ -1795,18 +1657,16 @@ function actualizarQuesos(delta)
   for (var i = quesos.length - 1; i >= 0; i--) {
     var queso = quesos[i];
 
-    // Giran y suben y bajan un poco para que se vea que son recogibles.
+    // gira, sube y baja
     queso.fase += delta * 3;
     queso.modelo.rotation.y += delta;
     queso.modelo.position.y = queso.altura_base + 0.25 + 0.08 * Math.sin(queso.fase);
-    // El halo late: cambia de tamano con la misma fase.
     var latido = 1.6 + 0.4 * Math.sin(queso.fase * 2);
     queso.halo.scale.set(latido, latido, 1);
     var latidoCharco = 2.4 + 0.5 * Math.sin(queso.fase * 2);
     queso.charco.scale.set(latidoCharco / 2.6, latidoCharco / 2.6, 1);
 
-    // Recogida: distancia en el plano XZ entre la rata y el queso y misma altura
-    // (un queso encima de un parterre no se coge desde abajo). No vale desde un escondite.
+    // recoger el queso (a su misma altura)
     if (!rataOculta() &&
         distanciaXZ(queso.modelo.position, pos_rata.x, pos_rata.z) < distancia_recoger_queso &&
         Math.abs(pos_rata.y - queso.altura_base) < 0.5) {
@@ -1815,14 +1675,14 @@ function actualizarQuesos(delta)
       quitarMarcador(queso.marcador);
       quesos.splice(i, 1);
       quesos_recogidos++;
-      // 10- cada queso alarga el tiempo limite.
+      // +5 s
       tiempo_restante += tiempo_por_queso;
       aviso_bonus = 1.2;
     }
   }
 }
 
-// Distancia entre un punto y unas coordenadas (x, z) ignorando la altura.
+// distancia en el suelo
 function distanciaXZ(punto, x, z)
 {
   var dx = punto.x - x;
@@ -1831,59 +1691,7 @@ function distanciaXZ(punto, x, z)
 }
 
 // 8- perseguidores (gatos y perros)
-// Animal de reserva hecho con primitivas, por si falta el modelo GLTF. Mira hacia +Z.
-function crearPerseguidorPrimitivas(color)
-{
-  var modelo = new THREE.Group();
-  var materialPelo = new THREE.MeshPhongMaterial({ color: color });
-  var materialOjo = new THREE.MeshPhongMaterial({ color: 0x66ff66, emissive: 0x33aa33 });
-
-  var cuerpo = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 12), materialPelo);
-  cuerpo.scale.set(1, 0.85, 1.7);
-  cuerpo.position.y = 0.38;
-  modelo.add(cuerpo);
-
-  var cabeza = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 12), materialPelo);
-  cabeza.position.set(0, 0.55, 0.55);
-  modelo.add(cabeza);
-
-  for (var lado = -1; lado <= 1; lado += 2) {
-    var oreja = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 4), materialPelo);
-    oreja.position.set(lado * 0.11, 0.74, 0.5);
-    modelo.add(oreja);
-
-    var ojo = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), materialOjo);
-    ojo.position.set(lado * 0.08, 0.58, 0.72);
-    modelo.add(ojo);
-  }
-
-  var cola = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.045, 0.7, 8), materialPelo);
-  cola.position.set(0, 0.6, -0.75);
-  cola.rotation.x = -0.6;
-  modelo.add(cola);
-
-  var patas = [];
-  var posicionesPatas = [[-0.14, 0.3], [0.14, 0.3], [-0.14, -0.3], [0.14, -0.3]];
-  for (var i = 0; i < 4; i++) {
-    var pivote = new THREE.Group();
-    pivote.position.set(posicionesPatas[i][0], 0.33, posicionesPatas[i][1]);
-    var pata = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.35, 8), materialPelo);
-    pata.position.y = -0.17;
-    pivote.add(pata);
-    modelo.add(pivote);
-    patas.push(pivote);
-  }
-
-  modelo.traverse(function(objeto) {
-    if (objeto.isMesh) objeto.castShadow = true;
-  });
-  modelo.scale.set(1.3, 1.3, 1.3);
-  modelo.userData.patas = patas;
-  return modelo;
-}
-
-// Tinta un modelo clonando sus materiales, como colorearMotoIA() del Tron: asi dos
-// animales del mismo fichero no comparten material y cada uno tiene su color.
+// tinte (colorearMotoIA del Tron)
 function tenirModelo(modelo, color)
 {
   var tinte = new THREE.Color(color);
@@ -1904,8 +1712,7 @@ function tenirModelo(modelo, color)
   });
 }
 
-// Busca un clip por su nombre. Los nombres vienen como "AnimalArmature|Walk" o solo
-// "Walk", asi que comparamos el ultimo trozo despues de la barra.
+// busca un clip por el final del nombre ("AnimalArmature|Walk")
 function buscarClip(animaciones, nombre)
 {
   for (var i = 0; i < animaciones.length; i++) {
@@ -1916,13 +1723,12 @@ function buscarClip(animaciones, nombre)
   return null;
 }
 
-// Crea los datos del perseguidor y lo coloca en la escena.
+// crea un gato o un perro
 function nuevoPerseguidor(tipo, modelo, anguloInicial, mixerAgente, acciones)
 {
   var agente = {
     tipo: tipo,
     modelo: modelo,
-    patas: modelo.userData.patas || null,
     mixer: mixerAgente,
     acciones: acciones,
     accion_actual: null,
@@ -1931,26 +1737,24 @@ function nuevoPerseguidor(tipo, modelo, anguloInicial, mixerAgente, acciones)
       0,
       Math.sin(anguloInicial) * (radio_plaza - 3)
     ),
-    angulo: Math.atan2(-Math.cos(anguloInicial), -Math.sin(anguloInicial)),  // mirando al centro
+    angulo: Math.atan2(-Math.cos(anguloInicial), -Math.sin(anguloInicial)),   // mirando al centro
     angulo_inicial: Math.atan2(-Math.cos(anguloInicial), -Math.sin(anguloInicial)),
     velocity: new THREE.Vector3(0, 0, 1),
-    estado: 'paseando',            // 'paseando', 'persiguiendo' o 'aburrido'
+    estado: 'paseando',   // paseando, persiguiendo o aburrido
     tiempo_persiguiendo: 0,
     tiempo_aburrido: 0,
     direccion_giro: 1,
     frames_giro: 0,
     frames_hasta_cambio: 60,
-    fase: 0,
-    // SALTO POR ENCIMA- el cilindro llega 0.3 por encima del lomo: los rayos de la rata
-    // salen a 0.3 de sus pies, asi que dejan de chocar justo cuando la rata ya esta mas
-    // alta que el lomo (rataPorEncima) y puede seguir avanzando por encima del animal.
-    alto_colisionador: tipo.altura_lomo + 0.3,
-    colisionador: crearColisionador(0.5, tipo.altura_lomo + 0.3),
+    frames_quieto: 0,
+    ancho: tipo.ancho,
+    alcance: tipo.alcance,
     marcador: crearMarcador(color_marcador[tipo.nombre], 1.7),
-    // Los gatos pasan junto a los troncos; los perros los rodean.
-    lista_obstaculos: tipo.sube_arboles ? objectsToCheckGatos : objectsToCheckPerros,
-    desfase: 0   // todos los modelos miran a +Z; aqui iria un PI/2 si alguno viniera girado
+    lista_obstaculos: objectsToCheckPerros
   };
+  // los gatos pasan junto a los troncos
+  if (tipo.sube_arboles)
+    agente.lista_obstaculos = objectsToCheckGatos;
   agente.pos_inicial = agente.pos.clone();
   modelo.position.copy(agente.pos);
   scene.add(modelo);
@@ -1960,8 +1764,7 @@ function nuevoPerseguidor(tipo, modelo, anguloInicial, mixerAgente, acciones)
   return agente;
 }
 
-// Carga el modelo GLTF del tipo pedido; si falla (por ejemplo, no esta descargado),
-// usa el de primitivas. Misma estructura que loadLightCycle() del Tron.
+// carga un gato o un perro (como loadLightCycle del Tron)
 function loadPerseguidor(nombreTipo, indice, anguloInicial)
 {
   var tipo = tipos_perseguidor[nombreTipo];
@@ -1976,7 +1779,7 @@ function loadPerseguidor(nombreTipo, indice, anguloInicial)
       if (tinte !== 0xffffff)
         tenirModelo(modelo, tinte);
 
-      // Escala por caja envolvente, como con las personas.
+      // escala segun la altura que queremos
       var box = new THREE.Box3().setFromObject(modelo);
       var size = new THREE.Vector3();
       box.getSize(size);
@@ -1986,65 +1789,61 @@ function loadPerseguidor(nombreTipo, indice, anguloInicial)
         if (objeto.isMesh) objeto.castShadow = true;
       });
 
-      // Clips: andar, correr (el perro lo llama "Gallop") y atacar (el gato, "Headbutt").
+      // clips (el perro corre con Gallop y el gato ataca con Headbutt)
       var mixerAgente = new THREE.AnimationMixer(modelo);
       var clipAndar = buscarClip(gltf.animations, 'Walk');
-      if (clipAndar === null && gltf.animations.length > 0) {
-        // Sin clip de andar el animal se deslizaria quieto: usamos el primero que haya.
-        console.warn(fichero + ' no tiene clip Walk; se usa ' + gltf.animations[0].name);
-        clipAndar = gltf.animations[0];
-      }
-      var clipCorrer = buscarClip(gltf.animations, 'Run') || buscarClip(gltf.animations, 'Gallop') || clipAndar;
-      var clipAtacar = buscarClip(gltf.animations, 'Attack') || buscarClip(gltf.animations, 'Headbutt');
-      // Para cuando se aburre: el gato se pone a comer y el perro tambien (o se queda quieto).
-      var clipQuieto = buscarClip(gltf.animations, 'Idle_Eating') || buscarClip(gltf.animations, 'Eating') ||
-                       buscarClip(gltf.animations, 'Idle');
+      var clipCorrer = buscarClip(gltf.animations, 'Run');
+      if (clipCorrer === null)
+        clipCorrer = buscarClip(gltf.animations, 'Gallop');
+      var clipAtacar = buscarClip(gltf.animations, 'Attack');
+      if (clipAtacar === null)
+        clipAtacar = buscarClip(gltf.animations, 'Headbutt');
+      var clipQuieto = buscarClip(gltf.animations, 'Idle_Eating');
+      if (clipQuieto === null)
+        clipQuieto = buscarClip(gltf.animations, 'Eating');
+
       var acciones = {
-        andar: clipAndar !== null ? mixerAgente.clipAction(clipAndar) : null,
-        correr: clipCorrer !== null ? mixerAgente.clipAction(clipCorrer) : null,
-        atacar: clipAtacar !== null ? mixerAgente.clipAction(clipAtacar) : null,
-        quieto: clipQuieto !== null ? mixerAgente.clipAction(clipQuieto) : null
+        andar: mixerAgente.clipAction(clipAndar),
+        correr: mixerAgente.clipAction(clipCorrer),
+        atacar: mixerAgente.clipAction(clipAtacar),
+        quieto: mixerAgente.clipAction(clipQuieto)
       };
-      console.log(nombreTipo + ' cargado. Animaciones:', gltf.animations.map(function(a) { return a.name; }));
+      console.log(nombreTipo + ' cargado');
 
       nuevoPerseguidor(tipo, modelo, anguloInicial, mixerAgente, acciones);
     },
     undefined,
     function(error) {
-      console.warn('No se pudo cargar el modelo del ' + nombreTipo + ' (' + fichero + '); se usa el de primitivas.');
-      nuevoPerseguidor(tipo, crearPerseguidorPrimitivas(tipo.color_reserva), anguloInicial, null,
-        { andar: null, correr: null, atacar: null, quieto: null });
+      console.error('No se pudo cargar el ' + nombreTipo, error);
     }
   );
 }
 
-// La rata esta fuera del alcance de este perseguidor: en una alcantarilla siempre;
-// en un arbol o en una plataforma solo si el animal no sabe trepar.
+// a salvo de este animal
 function rataASalvoDe(agente)
 {
   return rata_escondida || ((rata_en_arbol || rata_en_plataforma) && !agente.tipo.sube_arboles);
 }
 
-// Oculta de verdad (no se puede ni recoger queso): en cualquiera de los dos escondites.
+// en una alcantarilla o en un arbol
 function rataOculta()
 {
   return rata_escondida || rata_en_arbol;
 }
 
-// Fuera del alcance de las personas: escondida o subida a una plataforma.
+// a salvo de las personas
 function rataInalcanzable()
 {
   return rataOculta() || rata_en_plataforma;
 }
 
-// SALTO POR ENCIMA- en pleno salto, la rata se libra del animal si sus pies estan mas
-// altos que el lomo (contando la altura a la que esta el animal, por si es un gato
-// subido a una plataforma).
+// saltando por encima del animal
 function rataPorEncima(agente)
 {
   return !en_suelo && pos_rata.y - agente.modelo.position.y > agente.tipo.altura_lomo;
 }
 
+// mueve un gato o un perro
 function actualizarPerseguidor(agente, delta)
 {
   var xAntes = agente.pos.x, zAntes = agente.pos.z;
@@ -2054,37 +1853,43 @@ function actualizarPerseguidor(agente, delta)
   var alturaModelo = 0;
 
   if (agente.estado === 'persiguiendo') {
+    // pierde el rastro
     if (rataASalvoDe(agente)) {
-      // Pierde el rastro y vuelve a pasear.
       agente.estado = 'paseando';
       agente.frames_giro = 0;
       agente.tiempo_persiguiendo = 0;
     } else if (agente.tiempo_persiguiendo > segundos_max_persecucion) {
-      // ABURRIMIENTO- lleva demasiado tiempo detras de la rata: se cansa y la deja.
+      // se aburre y se da la vuelta
       agente.estado = 'aburrido';
       agente.tiempo_aburrido = segundos_aburrido;
       agente.tiempo_persiguiendo = 0;
-      agente.angulo += Math.PI * (0.7 + Math.random() * 0.6);   // se da la vuelta
+      agente.angulo += Math.PI * (0.7 + Math.random() * 0.6);
       agente.frames_giro = 0;
       aviso_aburrido = 2.5;
       texto_aburrido = 'Un ' + agente.tipo.nombre + ' se ha aburrido de perseguirte';
     } else {
       agente.tiempo_persiguiendo += delta;
+      // esta rodeando un obstaculo
       if (agente.frames_giro > 0) {
-        // Esta rodeando un obstaculo: sigue girando hacia el lado elegido unos frames.
         agente.angulo += agente.direccion_giro * giro_perseguidor * 1.5;
         agente.frames_giro--;
       } else {
-        // Angulo hacia la rata: atan2(x, z) porque velocity = (sin a, 0, cos a).
+        // gira hacia la rata
         var anguloObjetivo = Math.atan2(haciaRata.x, haciaRata.z);
         var diferencia = anguloObjetivo - agente.angulo;
-        // Llevamos la diferencia a [-PI, PI] para girar por el lado corto.
-        diferencia = Math.atan2(Math.sin(diferencia), Math.cos(diferencia));
-        agente.angulo += THREE.MathUtils.clamp(diferencia, -giro_perseguidor, giro_perseguidor);
+        // entre -PI y PI para girar por el lado corto
+        while (diferencia > Math.PI)
+          diferencia -= 2 * Math.PI;
+        while (diferencia < -Math.PI)
+          diferencia += 2 * Math.PI;
+        if (diferencia > giro_perseguidor)
+          diferencia = giro_perseguidor;
+        if (diferencia < -giro_perseguidor)
+          diferencia = -giro_perseguidor;
+        agente.angulo += diferencia;
         agente.velocity.set(Math.sin(agente.angulo), 0, Math.cos(agente.angulo));
 
-        // Si la fuente, el mobiliario o una persona se interponen, se rodean: los
-        // sensores diagonales del Tron eligen el lado con mas espacio libre.
+        // si hay algo delante, lo rodea (sensores del Tron)
         if (distanciaLibre(agente, agente.velocity, agente.lista_obstaculos) < 1.5) {
           direccion_izquierda_ia.set(Math.sin(agente.angulo + Math.PI / 4), 0, Math.cos(agente.angulo + Math.PI / 4));
           direccion_derecha_ia.set(Math.sin(agente.angulo - Math.PI / 4), 0, Math.cos(agente.angulo - Math.PI / 4));
@@ -2096,16 +1901,17 @@ function actualizarPerseguidor(agente, delta)
       }
       agente.velocity.set(Math.sin(agente.angulo), 0, Math.cos(agente.angulo));
 
-      // Solo avanza si cabe: asi nunca atraviesa nada solido, aunque persiga a la rata.
+      // solo avanza si cabe
       if (distanciaLibreAncha(agente, agente.velocity, agente.lista_obstaculos) >
           agente.tipo.velocidad + agente.tipo.alcance)
         agente.pos.addScaledVector(agente.velocity, agente.tipo.velocidad);
 
-      // El gato trepa: si la rata esta en un arbol y el gato llega al tronco, sube con ella.
+      // el gato sube al arbol
       if (rata_en_arbol && agente.tipo.sube_arboles && arbol_actual !== null &&
           distanciaXZ(arbol_actual.pos, agente.pos.x, agente.pos.z) < radio_arbol + 0.5)
         alturaModelo = altura_subida_gato;
 
+      // la atrapa, salvo que salte por encima
       if (distancia < distancia_atrapar) {
         if (rataPorEncima(agente)) {
           aviso_salto = 1.5;
@@ -2116,13 +1922,14 @@ function actualizarPerseguidor(agente, delta)
       }
     }
   } else if (agente.estado === 'aburrido') {
-    // Primero se queda quieto un momento; luego pasea, aunque vea a la rata.
+    // aburrido: quieto un rato y luego pasea
     agente.tiempo_aburrido -= delta;
     if (agente.tiempo_aburrido < segundos_aburrido - segundos_parado_aburrido)
       pasear(agente, agente.lista_obstaculos, agente.tipo.velocidad * 0.5, giro_perseguidor * 0.5);
     if (agente.tiempo_aburrido <= 0)
       agente.estado = 'paseando';
   } else {
+    // ve a la rata
     if (!rataASalvoDe(agente) && distancia < agente.tipo.radio_vision && tiempo_partida > segundos_de_gracia) {
       agente.estado = 'persiguiendo';
       agente.tiempo_persiguiendo = 0;
@@ -2131,43 +1938,32 @@ function actualizarPerseguidor(agente, delta)
     }
   }
 
-  // Los que trepan (gatos) siguen la altura de las plataformas que pisan; los perros
-  // no las tienen debajo nunca porque las rodean.
+  // los gatos suben a las plataformas
   if (agente.tipo.sube_arboles)
     alturaModelo = Math.max(alturaModelo, alturaSuelo(agente.pos.x, agente.pos.z, agente.modelo.position.y, altura_escalon_gato));
 
-  // Quieto a proposito (aburrido) no cuenta como atasco.
+  // parado a proposito no es un atasco
   var paradoAburrido = agente.estado === 'aburrido' &&
     agente.tiempo_aburrido >= segundos_aburrido - segundos_parado_aburrido;
   if (!paradoAburrido)
     comprobarAtasco(agente, xAntes, zAntes);
 
   agente.modelo.position.set(agente.pos.x, alturaModelo, agente.pos.z);
-  agente.modelo.rotation.set(0, agente.angulo + agente.desfase, 0);
-  agente.colisionador.position.set(agente.pos.x, alturaModelo + agente.alto_colisionador / 2, agente.pos.z);
+  agente.modelo.rotation.set(0, agente.angulo, 0);
 
-  // Animacion: con modelo, clip de andar o correr; con primitivas, patas como pendulos.
-  if (agente.mixer !== null) {
-    if (!juego_terminado) {
-      if (agente.estado === 'persiguiendo')
-        cambiarAnimacionAgente(agente, agente.acciones.correr);
-      else if (paradoAburrido && agente.acciones.quieto !== null)
-        cambiarAnimacionAgente(agente, agente.acciones.quieto);
-      else
-        cambiarAnimacionAgente(agente, agente.acciones.andar);
-    }
-    agente.mixer.update(delta);
-  } else if (agente.patas !== null) {
-    agente.fase += delta * (agente.estado === 'persiguiendo' ? 18 : 9);
-    for (var i = 0; i < 4; i++) {
-      var signo = (i === 0 || i === 3) ? 1 : -1;
-      agente.patas[i].rotation.x = 0.5 * Math.sin(agente.fase) * signo;
-    }
+  // animacion: correr, comer o andar
+  if (!juego_terminado) {
+    if (agente.estado === 'persiguiendo')
+      cambiarAnimacionAgente(agente, agente.acciones.correr);
+    else if (paradoAburrido)
+      cambiarAnimacionAgente(agente, agente.acciones.quieto);
+    else
+      cambiarAnimacionAgente(agente, agente.acciones.andar);
   }
+  agente.mixer.update(delta);
 }
 
-// 2- rata
-// Copiado de loadLightCycle() del Tron y de ej-mixamo.js para las animaciones.
+// 2- rata (loadLightCycle del Tron)
 function loadRata()
 {
   var loader = new THREE.GLTFLoader();
@@ -2177,7 +1973,7 @@ function loadRata()
     function(gltf) {
       rata = gltf.scene;
       rata.position.copy(pos_rata);
-      rata.scale.set(escala_rata, escala_rata, escala_rata); // Ajusta la escala segun sea necesario
+      rata.scale.set(escala_rata, escala_rata, escala_rata);
 
       rata.traverse(function(objeto) {
         if (objeto.isMesh) {
@@ -2187,14 +1983,13 @@ function loadRata()
       scene.add(rata);
       compilarShaders();
 
-      // Animaciones: una accion por cada clip del fichero (ej-mixamo.js).
+      // animaciones (ej-mixamo.js)
       mixer = new THREE.AnimationMixer(rata);
       gltf.animations.forEach(function(clip) {
-        // Los nombres vienen como "RatArmature|Rat_Idle"; nos quedamos con "Idle".
-        var nombre = clip.name.split('_').pop();
+        var nombre = clip.name.split('_').pop();   // "Rat_Idle" -> "Idle"
         acciones_rata[nombre] = mixer.clipAction(clip);
       });
-      // La muerte se reproduce una sola vez y se queda en el ultimo fotograma.
+      // la muerte solo una vez
       if (acciones_rata['Death'] !== undefined) {
         acciones_rata['Death'].setLoop(THREE.LoopOnce);
         acciones_rata['Death'].clampWhenFinished = true;
@@ -2202,7 +1997,7 @@ function loadRata()
       console.log('Animaciones de la rata:', Object.keys(acciones_rata));
       cambiarAnimacionRata('Idle');
 
-      // 10- ya se puede empezar: activamos el boton del menu.
+      // ya se puede empezar
       var boton = document.getElementById('boton_empezar');
       boton.disabled = false;
       boton.textContent = 'Empezar partida';
@@ -2214,7 +2009,7 @@ function loadRata()
   );
 }
 
-// Detiene la animacion actual y reproduce la nueva (changeAnimation de ej-mixamo.js).
+// cambia de animacion (ej-mixamo.js)
 function cambiarAnimacionRata(nombre)
 {
   if (accion_actual === acciones_rata[nombre] || acciones_rata[nombre] === undefined)
@@ -2227,7 +2022,7 @@ function cambiarAnimacionRata(nombre)
   accion_actual.play();
 }
 
-// Lo mismo para personas y gatos, que guardan su accion actual en su propio objeto.
+// lo mismo para personas y animales
 function cambiarAnimacionAgente(agente, accion)
 {
   if (accion === null || accion === undefined || agente.accion_actual === accion)
@@ -2241,8 +2036,6 @@ function cambiarAnimacionAgente(agente, accion)
 }
 
 // 5- personas
-// Cada persona es un modelo GLTF con su propio mixer, su angulo y su estado:
-// 'paseando', 'acercando' o 'pateando'.
 function loadPersona(fichero, anguloInicial)
 {
   var loader = new THREE.GLTFLoader();
@@ -2262,8 +2055,8 @@ function loadPersona(fichero, anguloInicial)
         velocity: new THREE.Vector3(0, 0, 1),
         mixer: new THREE.AnimationMixer(gltf.scene),
         accion_andar: null,
-        accion_patada: null,     // solo los modelos que traen Kick_Right
-        accion_golpe: null,      // Punch: se usa al atrapar a la rata por contacto
+        accion_patada: null,
+        accion_golpe: null,
         accion_actual: null,
         estado: 'paseando',
         tiempo_patada: 0,
@@ -2273,12 +2066,14 @@ function loadPersona(fichero, anguloInicial)
         direccion_giro: 1,
         frames_giro: 0,
         frames_hasta_cambio: 90,
+        frames_quieto: 0,
+        ancho: 0.3,
+        alcance: 0.5,
         colisionador: crearColisionador(0.5, altura_persona),
         marcador: crearMarcador(color_marcador.persona, 1.7)
       };
 
-      // Ajustamos la escala al tamano del mesh que cargamos (como en ej-loader.js):
-      // medimos el bounding box y escalamos para que mida altura_persona.
+      // escala segun su altura (ej-loader.js)
       var box = new THREE.Box3().setFromObject(persona.modelo);
       var size = new THREE.Vector3();
       box.getSize(size);
@@ -2291,8 +2086,7 @@ function loadPersona(fichero, anguloInicial)
       scene.add(persona.modelo);
       compilarShaders();
 
-      // Clips: andar, patada y punetazo. Los nombres cambian segun el modelo
-      // ("Man_Walk", "Female_Walk", "Walk"; "Kick_Right"; "Man_Punch", "Punch_Right"...).
+      // clips: andar, patada y punetazo
       for (var i = 0; i < gltf.animations.length; i++) {
         var nombre = gltf.animations[i].name;
         if (nombre.indexOf('Walk') !== -1 && persona.accion_andar === null)
@@ -2306,7 +2100,7 @@ function loadPersona(fichero, anguloInicial)
 
       persona.pos_inicial = persona.pos.clone();
       personas.push(persona);
-      // La rata choca con las personas y las personas (y los gatos) se esquivan entre si.
+      // todos chocan con las personas
       objectsToCheck.push(persona.colisionador);
       objectsToCheckIA.push(persona.colisionador);
       objectsToCheckGatos.push(persona.colisionador);
@@ -2319,44 +2113,42 @@ function loadPersona(fichero, anguloInicial)
   );
 }
 
-// Lanza un rayo desde un agente (persona o gato) en una direccion y devuelve la
-// distancia al primer obstaculo, sin contarse a si mismo (IA del Tron).
+// distancia al primer obstaculo (distanciaLibreIA del Tron)
 function distanciaLibre(agente, direccion, lista)
 {
-  // El rayo sale a 0.35 de los pies: asi choca con el escalon de la fuente y los
-  // parterres (0.5 de alto). Los gatos que han subido al escalon lo lanzan desde alli.
   origen_rayo_ia.copy(agente.pos);
   origen_rayo_ia.y = agente.modelo.position.y + 0.35;
   raycaster_ia.set(origen_rayo_ia, direccion);
 
-  const impactos = raycaster_ia.intersectObjects(listaSinAgente(agente, lista), true);
-  var distancia = impactos.length > 0 ? impactos[0].distance : Infinity;
+  const impactos = raycaster_ia.intersectObjects(lista, true);
+  var distancia = Infinity;
+  for (var i = 0; i < impactos.length; i++) {
+    // sin contar su propio cilindro
+    if (impactos[i].object !== agente.colisionador) {
+      distancia = impactos[i].distance;
+      break;
+    }
+  }
   return Math.min(distancia, distanciaAlBorde(origen_rayo_ia, direccion));
 }
 
-// RENDIMIENTO- distancia desde un punto de la plaza hasta su borde (circunferencia de
-// radio R) avanzando en la direccion d (unitaria). Es la interseccion rayo-circunferencia:
-// |p + t d| = R  ->  t^2 + 2 (p.d) t + (|p|^2 - R^2) = 0, y nos quedamos con la raiz
-// positiva. Con productos escalares (tema 1) en vez de lanzar un rayo contra los 128
-// triangulos del cilindro invisible, que era lo mas caro de la IA.
+// distancia hasta el borde de la plaza (rayo y circunferencia)
 function distanciaAlBorde(punto, direccion)
 {
   var R = radio_plaza - 0.3;
-  var b = punto.x * direccion.x + punto.z * direccion.z;            // p . d
-  var c = punto.x * punto.x + punto.z * punto.z - R * R;           // |p|^2 - R^2
+  var b = punto.x * direccion.x + punto.z * direccion.z;
+  var c = punto.x * punto.x + punto.z * punto.z - R * R;
   var discriminante = b * b - c;
   if (discriminante < 0)
     return Infinity;
   return -b + Math.sqrt(discriminante);
 }
 
-// ATASCO- como nadie atraviesa nada, alguien puede quedar encajado entre obstaculos sin
-// poder avanzar en ninguna direccion. Si lleva 40 frames sin moverse, da media vuelta
-// (con algo de azar) para salir de ahi.
+// si lleva un rato sin moverse, da media vuelta
 function comprobarAtasco(agente, xAntes, zAntes)
 {
   if (Math.abs(agente.pos.x - xAntes) + Math.abs(agente.pos.z - zAntes) < 0.0001)
-    agente.frames_quieto = (agente.frames_quieto || 0) + 1;
+    agente.frames_quieto++;
   else
     agente.frames_quieto = 0;
 
@@ -2367,19 +2159,14 @@ function comprobarAtasco(agente, xAntes, zAntes)
   }
 }
 
-// Medidas del cuerpo: los animales las tienen en su tipo; las personas, fijas.
-function anchoAgente(agente) { return agente.tipo ? agente.tipo.ancho : 0.3; }
-function alcanceAgente(agente) { return agente.tipo ? agente.tipo.alcance : 0.5; }
-
-// Como la de la rata: tres rayos (centro y los dos costados) y devuelve el mas corto.
-// Se usa para decidir si el agente puede dar el paso sin meterse en nada solido.
+// tres rayos (centro y lados), el mas corto
 const lateral_rayo_ia = new THREE.Vector3();
 const centro_agente_tmp = new THREE.Vector3();
 function distanciaLibreAncha(agente, direccion, lista)
 {
   var minima = Infinity;
   centro_agente_tmp.copy(agente.pos);
-  lateral_rayo_ia.set(direccion.z, 0, -direccion.x).multiplyScalar(anchoAgente(agente));
+  lateral_rayo_ia.set(direccion.z, 0, -direccion.x).multiplyScalar(agente.ancho);
   for (var lado = -1; lado <= 1; lado++) {
     agente.pos.copy(centro_agente_tmp).addScaledVector(lateral_rayo_ia, lado);
     minima = Math.min(minima, distanciaLibre(agente, direccion, lista));
@@ -2388,25 +2175,7 @@ function distanciaLibreAncha(agente, direccion, lista)
   return minima;
 }
 
-// RENDIMIENTO- la lista de obstaculos sin el propio agente se calcula una vez y se
-// guarda en el agente; solo se rehace si la lista original ha crecido (al cargar
-// mas personas). Antes se creaba una lista nueva en cada rayo, muchas veces por frame,
-// y eso da trabajo al recolector de basura.
-function listaSinAgente(agente, lista)
-{
-  if (agente.lista_cache === undefined || agente.lista_cache_origen !== lista ||
-      agente.lista_cache_tamano !== lista.length) {
-    agente.lista_cache = lista.filter(function(obj) {
-      return obj !== agente.modelo && obj !== agente.colisionador;
-    });
-    agente.lista_cache_origen = lista;
-    agente.lista_cache_tamano = lista.length;
-  }
-  return agente.lista_cache;
-}
-
-// Paseo erratico: cada cierto numero de frames el agente decide un giro al azar,
-// y ademas usa los tres sensores del Tron (frente y diagonales) para esquivar.
+// paseo al azar esquivando cosas (IA del Tron)
 function pasear(agente, lista, velocidad, giro)
 {
   agente.velocity.set(Math.sin(agente.angulo), 0, Math.cos(agente.angulo));
@@ -2430,10 +2199,12 @@ function pasear(agente, lista, velocidad, giro)
     agente.frames_giro = 30;
   }
 
-  // Cambio de rumbo al azar de vez en cuando: asi el paseo parece erratico.
+  // cambio de rumbo al azar
   agente.frames_hasta_cambio--;
   if (agente.frames_giro === 0 && agente.frames_hasta_cambio <= 0) {
-    agente.direccion_giro = Math.random() < 0.5 ? 1 : -1;
+    agente.direccion_giro = 1;
+    if (Math.random() < 0.5)
+      agente.direccion_giro = -1;
     agente.frames_giro = 15 + Math.floor(Math.random() * 40);
     agente.frames_hasta_cambio = 90 + Math.floor(Math.random() * 150);
   }
@@ -2445,8 +2216,8 @@ function pasear(agente, lista, velocidad, giro)
     distancia_frente = distanciaLibre(agente, agente.velocity, lista);
   }
 
-  // Si de todos modos hay algo delante, se queda parado girando.
-  if (distanciaLibreAncha(agente, agente.velocity, lista) > velocidad + alcanceAgente(agente))
+  // solo avanza si cabe
+  if (distanciaLibreAncha(agente, agente.velocity, lista) > velocidad + agente.alcance)
     agente.pos.addScaledVector(agente.velocity, velocidad);
 }
 
@@ -2457,36 +2228,35 @@ function actualizarPersona(persona, delta)
   haciaRata.y = 0;
   var distancia = haciaRata.length();
 
-  // Chocar con una persona acaba la partida (vale para todas, sepan o no dar patadas).
+  // chocar con una persona
   if (!rataInalcanzable() && !juego_terminado && distancia < distancia_atrapar_persona) {
     persona.angulo = Math.atan2(haciaRata.x, haciaRata.z);
     cambiarAnimacionAgente(persona, persona.accion_golpe);
     terminarJuego('Te ha pillado una persona', persona);
   }
 
+  // patada
   if (persona.estado === 'pateando') {
     persona.tiempo_patada += delta;
 
-    // En el momento del impacto comprobamos si la rata sigue al alcance.
+    // momento del golpe
     if (!persona.impacto_comprobado && persona.tiempo_patada >= momento_impacto_patada) {
       persona.impacto_comprobado = true;
       if (!rataInalcanzable() && distancia < alcance_patada)
         terminarJuego('Te ha dado una patada', persona);
     }
 
-    // Cuando acaba el clip vuelve a pasear y descansa un rato antes de volver a golpear.
     if (persona.tiempo_patada >= persona.accion_patada.getClip().duration) {
       persona.estado = 'paseando';
       persona.frames_descanso = 90;
       cambiarAnimacionAgente(persona, persona.accion_andar);
     }
   } else if (persona.estado === 'acercando') {
-    // Va a por la rata: se encara hacia ella y avanza hasta tenerla al alcance.
+    // va hacia la rata
     persona.frames_acercando++;
 
     if (rataInalcanzable() || juego_terminado || distancia > radio_vision_persona * 1.6 ||
         persona.frames_acercando > frames_maximos_acercando) {
-      // La pierde de vista (o se cansa) y vuelve a pasear.
       persona.estado = 'paseando';
       persona.frames_descanso = 60;
     } else {
@@ -2494,9 +2264,8 @@ function actualizarPersona(persona, delta)
       persona.velocity.set(Math.sin(persona.angulo), 0, Math.cos(persona.angulo));
 
       if (distancia > alcance_patada * 0.8) {
-        // Avanza algo mas rapido que paseando, si no hay nada en medio.
         var paso = velocidad_persona * 1.5;
-        if (distanciaLibreAncha(persona, persona.velocity, objectsToCheckIA) > paso + alcanceAgente(persona))
+        if (distanciaLibreAncha(persona, persona.velocity, objectsToCheckIA) > paso + persona.alcance)
           persona.pos.addScaledVector(persona.velocity, paso);
       } else {
         persona.estado = 'pateando';
@@ -2506,10 +2275,7 @@ function actualizarPersona(persona, delta)
       }
     }
   } else {
-    // Deteccion de la rata: cerca y dentro del campo de vision. Es el ejercicio
-    // "nos ha visto el enemigo" del tema 1: el producto escalar entre la direccion
-    // de la persona y el vector hacia la rata es el coseno del angulo entre ambos.
-    // Solo las personas con clip de patada van a por la rata.
+    // ve a la rata si esta cerca y delante (producto escalar, tema 1)
     if (persona.frames_descanso > 0)
       persona.frames_descanso--;
 
@@ -2545,19 +2311,10 @@ function actualizarEscondites(delta)
     var dentro = en_suelo && pos_rata.y < 0.1 && distanciaXZ(escondite.pos, pos_rata.x, pos_rata.z) < radio_escondite;
     if (dentro)
       rata_escondida = true;
-
-    // Anillo, halo y columna laten; si la rata esta dentro se ponen blancos.
-    var latido = 0.35 + 0.2 * Math.sin(clock.elapsedTime * 3 + i);
-    escondite.anillo.material.opacity = dentro ? 0.9 : latido;
-    escondite.anillo.material.color.set(dentro ? 0xffffff : 0x33ff88);
-    var tamanoHalo = 3.0 + 0.6 * Math.sin(clock.elapsedTime * 3 + i);
-    escondite.halo.scale.set(tamanoHalo, tamanoHalo, 1);
-    escondite.halo.material.color.set(dentro ? 0xffffff : 0x33ff88);
-    escondite.haz.material.opacity = dentro ? 0.6 : 0.25 + 0.12 * Math.sin(clock.elapsedTime * 3 + i);
-    escondite.haz.material.color.set(dentro ? 0xffffff : 0x33ff88);
+    brilloEscondite(escondite, dentro, 0x33ff88, Math.sin(clock.elapsedTime * 3 + i));
   }
 
-  // 7b- arboles: la rata sube si esta junto al tronco (y no esta ya en una alcantarilla).
+  // 7b- arboles
   rata_en_arbol = false;
   arbol_actual = null;
   for (var j = 0; j < arboles.length; j++) {
@@ -2567,18 +2324,30 @@ function actualizarEscondites(delta)
       rata_en_arbol = true;
       arbol_actual = arbol;
     }
-    var latidoArbol = 0.35 + 0.2 * Math.sin(clock.elapsedTime * 3 + j);
-    arbol.anillo.material.opacity = subida ? 0.9 : latidoArbol;
-    arbol.anillo.material.color.set(subida ? 0xffffff : 0xffb347);
-    var tamanoHaloArbol = 3.0 + 0.6 * Math.sin(clock.elapsedTime * 3 + j);
-    arbol.halo.scale.set(tamanoHaloArbol, tamanoHaloArbol, 1);
-    arbol.halo.material.color.set(subida ? 0xffffff : 0xffb347);
-    arbol.haz.material.opacity = subida ? 0.6 : 0.25 + 0.12 * Math.sin(clock.elapsedTime * 3 + j);
-    arbol.haz.material.color.set(subida ? 0xffffff : 0xffb347);
+    brilloEscondite(arbol, subida, 0xffb347, Math.sin(clock.elapsedTime * 3 + j));
   }
 }
 
-// 9- estado del juego
+// brillo que late (blanco si la rata esta dentro)
+function brilloEscondite(escondite, rataDentro, color, onda)
+{
+  var tamanoHalo = 3.0 + 0.6 * onda;
+  escondite.halo.scale.set(tamanoHalo, tamanoHalo, 1);
+
+  if (rataDentro) {
+    color = 0xffffff;
+    escondite.anillo.material.opacity = 0.9;
+    escondite.haz.material.opacity = 0.6;
+  } else {
+    escondite.anillo.material.opacity = 0.35 + 0.2 * onda;
+    escondite.haz.material.opacity = 0.25 + 0.12 * onda;
+  }
+  escondite.anillo.material.color.set(color);
+  escondite.halo.material.color.set(color);
+  escondite.haz.material.color.set(color);
+}
+
+// 9- fin de la partida
 function terminarJuego(motivo, atacante)
 {
   if (juego_terminado)
@@ -2586,11 +2355,10 @@ function terminarJuego(motivo, atacante)
 
   juego_terminado = true;
   cambiarAnimacionRata('Death');
-  // El que atrapa a la rata hace su gesto de ataque (si su modelo lo tiene).
-  if (atacante !== undefined && atacante.acciones !== undefined && atacante.acciones.atacar !== null)
+  // gesto de ataque
+  if (atacante !== undefined && atacante.acciones !== undefined)
     cambiarAnimacionAgente(atacante, atacante.acciones.atacar);
-  // 10- guardamos la partida en la tabla de records y decimos en que puesto ha quedado.
-  // Siempre se guarda en el navegador; si hay records online, ademas se envia al servidor.
+  // 10- guardar el record
   var segundos = Math.floor(tiempo_partida);
   var puestoLocal = guardarRecord(nombre_partida, quesos_recogidos, segundos);
 
@@ -2605,10 +2373,10 @@ function terminarJuego(motivo, atacante)
     return;
   }
 
+  // online
   document.getElementById('puesto').textContent = 'Guardando en la tabla online...';
   enviarRecordOnline(nombre_partida, quesos_recogidos, segundos)
     .then(function(fila) {
-      // Pedimos el top 10 y buscamos nuestra partida por su id para saber el puesto.
       return pedirRecordsOnline().then(function(records) {
         var puesto = 0;
         for (var i = 0; i < records.length; i++) {
@@ -2626,26 +2394,26 @@ function terminarJuego(motivo, atacante)
 
 function mostrarPuesto(puesto, tabla)
 {
-  document.getElementById('puesto').textContent = puesto > 0
-    ? '¡Puesto ' + puesto + ' en la tabla ' + tabla + '!'
-    : 'No entras en el top ' + max_records + ' ' + tabla + '. ¡Otra vez!';
+  var texto = 'No entras en el top ' + max_records + ' ' + tabla + '. ¡Otra vez!';
+  if (puesto > 0)
+    texto = '¡Puesto ' + puesto + ' en la tabla ' + tabla + '!';
+  document.getElementById('puesto').textContent = texto;
 }
 
-// 10- records
-// Se guardan en el localStorage del navegador como texto JSON. Leer y guardar estan
-// en dos funciones aparte para poder cambiarlas luego por un servidor (records online).
+// 10- records en el navegador (localStorage)
 function leerRecords()
 {
   try {
     var texto = localStorage.getItem(clave_records);
-    return texto ? JSON.parse(texto) : [];
+    if (texto === null)
+      return [];
+    return JSON.parse(texto);
   } catch (error) {
-    // En modo incognito o con el almacenamiento bloqueado no hay records.
     return [];
   }
 }
 
-// Orden: mas quesos primero; con los mismos quesos, el que haya aguantado mas tiempo.
+// mas quesos primero; si empatan, mas tiempo
 function compararRecords(a, b)
 {
   if (b.quesos !== a.quesos)
@@ -2653,8 +2421,7 @@ function compararRecords(a, b)
   return b.segundos - a.segundos;
 }
 
-// Anade la partida, ordena, se queda con las diez mejores y devuelve el puesto
-// conseguido (0 si no entra en la tabla).
+// guarda la partida y devuelve el puesto (0 si no entra)
 function guardarRecord(nombre, quesos, segundos)
 {
   var records = leerRecords();
@@ -2675,31 +2442,23 @@ function formatearTiempo(segundos)
 {
   var minutos = Math.floor(segundos / 60);
   var resto = segundos % 60;
-  return minutos + ':' + (resto < 10 ? '0' : '') + resto;
+  if (resto < 10)
+    return minutos + ':0' + resto;
+  return minutos + ':' + resto;
 }
 
-// 10b- RECORDS ONLINE con Supabase: una base de datos gratuita con una API REST.
-// Se habla con ella con fetch (peticiones HTTP), sin librerias. La URL y la clave
-// publica estan en js/config_online.js; si estan vacias se usan los records locales.
-// La clave publica se puede ver en el codigo sin problema: la base de datos solo deja
-// leer la tabla y anadir filas que cumplan las reglas (ver supabase_records.sql).
+// 10b- records online (Supabase, con fetch)
 function recordsOnline()
 {
-  return typeof SUPABASE_URL === 'string' && SUPABASE_URL !== '' &&
-         typeof SUPABASE_CLAVE === 'string' && SUPABASE_CLAVE !== '';
+  return SUPABASE_URL !== '' && SUPABASE_CLAVE !== '';
 }
 
 function cabecerasSupabase()
 {
-  var cabeceras = { 'apikey': SUPABASE_CLAVE, 'Content-Type': 'application/json' };
-  // Las claves antiguas de Supabase (anon) son un token JWT ("eyJ...") y tambien van
-  // en la cabecera Authorization; las nuevas (sb_publishable_...) solo en apikey.
-  if (SUPABASE_CLAVE.indexOf('eyJ') === 0)
-    cabeceras['Authorization'] = 'Bearer ' + SUPABASE_CLAVE;
-  return cabeceras;
+  return { 'apikey': SUPABASE_CLAVE, 'Content-Type': 'application/json' };
 }
 
-// Devuelve una promesa con las diez mejores partidas, ya ordenadas por el servidor.
+// las diez mejores
 function pedirRecordsOnline()
 {
   var url = SUPABASE_URL + '/rest/v1/records' +
@@ -2715,11 +2474,11 @@ function pedirRecordsOnline()
     });
 }
 
-// Anade una partida y devuelve una promesa con la fila creada (incluye su id).
+// guarda una partida
 function enviarRecordOnline(nombre, quesos, segundos)
 {
   var cabeceras = cabecerasSupabase();
-  cabeceras['Prefer'] = 'return=representation';   // que devuelva la fila insertada
+  cabeceras['Prefer'] = 'return=representation';   // devuelve la fila
 
   return fetch(SUPABASE_URL + '/rest/v1/records', {
     method: 'POST',
@@ -2736,7 +2495,7 @@ function enviarRecordOnline(nombre, quesos, segundos)
     });
 }
 
-// Tabla del menu: online si esta configurado; si no, o si falla, la del navegador.
+// tabla del menu (online o del navegador)
 function mostrarRecords()
 {
   if (!recordsOnline()) {
@@ -2755,9 +2514,7 @@ function mostrarRecords()
     });
 }
 
-// Rellena la tabla del menu. Los nombres se ponen con textContent (nunca innerHTML)
-// para que un nombre con etiquetas HTML no se interprete como codigo. Con records
-// online esto es imprescindible: los nombres los escribe cualquiera.
+// rellena la tabla (textContent, nunca innerHTML)
 function pintarRecords(records, titulo)
 {
   document.getElementById('titulo_records').textContent = titulo;
@@ -2775,20 +2532,27 @@ function pintarRecords(records, titulo)
     cuerpo.appendChild(fila);
   }
 
-  document.getElementById('tabla_records').style.display = records.length > 0 ? 'table' : 'none';
-  document.getElementById('sin_records').style.display = records.length > 0 ? 'none' : 'block';
+  if (records.length > 0) {
+    document.getElementById('tabla_records').style.display = 'table';
+    document.getElementById('sin_records').style.display = 'none';
+  } else {
+    document.getElementById('tabla_records').style.display = 'none';
+    document.getElementById('sin_records').style.display = 'block';
+  }
 }
 
 // 10- menu
 function prepararMenu()
 {
   try {
-    document.getElementById('nombre').value = localStorage.getItem(clave_nombre) || '';
+    var nombreGuardado = localStorage.getItem(clave_nombre);
+    if (nombreGuardado !== null)
+      document.getElementById('nombre').value = nombreGuardado;
   } catch (error) { }
   mostrarRecords();
 
   document.getElementById('form_menu').addEventListener('submit', function(event) {
-    event.preventDefault();   // el formulario no debe recargar la pagina
+    event.preventDefault();   // que no recargue la pagina
     empezarPartida();
   });
   document.getElementById('volver_menu').addEventListener('click', function() {
@@ -2798,17 +2562,18 @@ function prepararMenu()
 
 function empezarPartida()
 {
-  // Hay que esperar a que esten cargados la rata y los animales.
   if (rata === null)
     return;
 
-  // Como mucho 16 caracteres (la base de datos online tampoco acepta mas).
-  nombre_partida = document.getElementById('nombre').value.trim().slice(0, 16) || 'Rata anonima';
+  // nombre de la partida (16 letras como mucho)
+  nombre_partida = document.getElementById('nombre').value.trim().slice(0, 16);
+  if (nombre_partida === '')
+    nombre_partida = 'Rata anonima';
   try {
     localStorage.setItem(clave_nombre, nombre_partida);
   } catch (error) { }
 
-  // En el menu personas y animales han estado paseando: vuelven a sus sitios.
+  // todos vuelven a su sitio
   for (var i = 0; i < personas.length; i++) {
     personas[i].pos.copy(personas[i].pos_inicial);
     personas[i].angulo = personas[i].angulo_inicial;
@@ -2824,13 +2589,13 @@ function empezarPartida()
 
   tiempo_partida = 0;
   tiempo_restante = tiempo_inicial;
-  camara_spring_iniciada = false;   // la camara se coloca de golpe detras de la rata
-  document.activeElement.blur();    // que el boton no se quede con el foco (Espacio lo pulsaria)
+  camara_spring_iniciada = false;   // la camara se coloca de golpe
+  document.activeElement.blur();   // que Espacio no pulse el boton
   document.getElementById('menu').style.display = 'none';
   partida_iniciada = true;
 }
 
-// Fondo del menu: la camara da vueltas a la plaza y la gente pasea sin ver a la rata.
+// fondo del menu: la camara da vueltas a la plaza
 function animarMenu(delta)
 {
   angulo_menu += 0.08 * delta;
@@ -2852,17 +2617,18 @@ function animarMenu(delta)
   for (var j = 0; j < perseguidores.length; j++) {
     var agente = perseguidores[j];
     pasear(agente, agente.lista_obstaculos, agente.tipo.velocidad * 0.5, giro_perseguidor * 0.5);
-    var y = agente.tipo.sube_arboles
-      ? alturaSuelo(agente.pos.x, agente.pos.z, agente.modelo.position.y, altura_escalon_gato) : 0;
+    var y = 0;
+    if (agente.tipo.sube_arboles)
+      y = alturaSuelo(agente.pos.x, agente.pos.z, agente.modelo.position.y, altura_escalon_gato);
     agente.modelo.position.set(agente.pos.x, y, agente.pos.z);
-    agente.modelo.rotation.set(0, agente.angulo + agente.desfase, 0);
-    agente.colisionador.position.set(agente.pos.x, y + agente.alto_colisionador / 2, agente.pos.z);
-    if (agente.mixer !== null) agente.mixer.update(delta);
+    agente.modelo.rotation.set(0, agente.angulo, 0);
+    agente.mixer.update(delta);
   }
 
   if (mixer !== null) mixer.update(delta);
 }
 
+// 9- HUD
 function actualizarHUD()
 {
   var perseguidorCerca = null;
@@ -2896,20 +2662,23 @@ function actualizarHUD()
   document.getElementById('marcador_quesos').textContent = 'Quesos: ' + quesos_recogidos;
   document.getElementById('estado').textContent = estado;
 
-  // 10- reloj: rojo y parpadeando en los ultimos 5 segundos; "+5 s" al coger un queso.
+  // reloj: verde con +5 s y rojo al final
   var reloj = document.getElementById('reloj');
-  reloj.textContent = 'Tiempo: ' + tiempo_restante.toFixed(1) + ' s' + (aviso_bonus > 0 ? '  +' + tiempo_por_queso + ' s' : '');
-  if (aviso_bonus > 0)
+  reloj.textContent = 'Tiempo: ' + tiempo_restante.toFixed(1) + ' s';
+  reloj.style.color = '#ffffff';
+  if (aviso_bonus > 0) {
+    reloj.textContent += '  +' + tiempo_por_queso + ' s';
     reloj.style.color = '#4cff7a';
-  else if (tiempo_restante < 5)
-    reloj.style.color = (Math.floor(tiempo_restante * 4) % 2 === 0) ? '#ff4444' : '#ffffff';
-  else
-    reloj.style.color = '#ffffff';
+  } else if (tiempo_restante < 5 && Math.floor(tiempo_restante * 4) % 2 === 0) {
+    reloj.style.color = '#ff4444';
+  }
 
-  // Barra de energia del dash: verde si se puede correr, naranja mientras se recarga.
   var barra = document.getElementById('energia_barra');
   barra.style.width = (energia_dash * 100) + '%';
-  barra.style.background = (dash_activo || energia_dash >= energia_minima_dash) ? '#4cff7a' : '#ff9f3c';
+  if (dash_activo || energia_dash >= energia_minima_dash)
+    barra.style.background = '#4cff7a';
+  else
+    barra.style.background = '#ff9f3c';
 }
 
 function updateAspectRatio()
@@ -2919,7 +2688,7 @@ function updateAspectRatio()
   camera.updateProjectionMatrix();
 }
 
-// FINAL- integra un resorte amortiguado para cualquier posicion Vector3.
+// muelle amortiguado (Tron)
 function actualizarResorte(actual, velocidadActual, objetivo, delta)
 {
   aceleracion_camara
@@ -2932,13 +2701,18 @@ function actualizarResorte(actual, velocidadActual, objetivo, delta)
   actual.addScaledVector(velocidadActual, delta);
 }
 
-// FINAL- camara en tercera persona con posicion y punto de mirada elasticos.
-// En los escondites cambia a la camara vigia; el muelle hace la transicion sola.
+// camara en tercera persona (Tron); en un escondite sube y se aleja
 function updateCamera(delta)
 {
   var vigia = rataOculta();
-  var distancia = vigia ? distancia_camara_escondite : distancia_camara;
-  var altura = vigia ? altura_camara_escondite : altura_camara;
+  var distancia = distancia_camara;
+  var altura = altura_camara;
+  var fovObjetivo = fov_normal;
+  if (vigia) {
+    distancia = distancia_camara_escondite;
+    altura = altura_camara_escondite;
+    fovObjetivo = fov_escondite;
+  }
 
   posicion_objetivo_camara
     .copy(rata.position)
@@ -2951,16 +2725,13 @@ function updateCamera(delta)
   else
     mirada_objetivo_camara.y += desfase_lookat_y;
 
-  // Angulo de vision: se abre al esconderse y se cierra al salir, poco a poco.
-  // Cambiar el fovy obliga a recalcular la matriz de proyeccion (tema 3).
-  var fovObjetivo = vigia ? fov_escondite : fov_normal;
+  // cambia el fovy poco a poco (tema 3)
   if (Math.abs(camera.fov - fovObjetivo) > 0.05) {
     camera.fov += (fovObjetivo - camera.fov) * (1 - Math.exp(-4 * delta));
     camera.updateProjectionMatrix();
   }
 
-  // La primera posicion se inicializa sin recorrer toda la plaza desde la
-  // camara usada mientras se cargaba el modelo.
+  // la primera vez se coloca directamente
   if (!camara_spring_iniciada) {
     camera.position.copy(posicion_objetivo_camara);
     mirada_actual_camara.copy(mirada_objetivo_camara);
@@ -2985,7 +2756,7 @@ function updateCamera(delta)
   camera.lookAt(mirada_actual_camara);
 }
 
-// DEBUG- alterna entre la camara orbital y la camara en tercera persona.
+// C: camara orbital (Tron)
 function cambiarCamara()
 {
   camara_orbital = !camara_orbital;
@@ -2995,8 +2766,6 @@ function cambiarCamara()
     cameraControls.target.copy(rata.position);
     cameraControls.update();
   } else if (rata !== null) {
-    // Volvemos suavemente desde la posicion orbital, pero descartamos la
-    // velocidad anterior del resorte para evitar un tiron.
     velocidad_camara.set(0, 0, 0);
     velocidad_mirada_camara.set(0, 0, 0);
     mirada_actual_camara.copy(cameraControls.target);
@@ -3006,8 +2775,7 @@ function cambiarCamara()
   console.log(camara_orbital ? 'Camara orbital' : 'Camara en tercera persona');
 }
 
-// PAUSA- al pausar habilitamos OrbitControls; al continuar recuperamos la
-// camara en tercera persona. El render sigue activo para poder mover la vista.
+// P: pausa (Tron)
 function cambiarPausa()
 {
   juego_pausado = !juego_pausado;
@@ -3015,7 +2783,6 @@ function cambiarPausa()
   if (juego_pausado !== camara_orbital)
     cambiarCamara();
 
-  // Evita conservar una tecla de movimiento pulsada al cambiar de estado.
   controls.moveForward = false;
   controls.moveBackward = false;
   controls.moveLeft = false;
@@ -3025,8 +2792,7 @@ function cambiarPausa()
   console.log(juego_pausado ? 'Juego pausado' : 'Juego reanudado');
 }
 
-// 3- movimiento y camara en tercera persona
-// En este modo las mismas teclas ajustan los parametros de la camara.
+// ajuste de la camara con las teclas (Tron)
 function tunearCamara()
 {
   var cambio = false;
@@ -3069,35 +2835,31 @@ function tunearCamara()
 
 function update()
 {
-  // Limitamos el delta para evitar saltos bruscos al volver a la pestana.
+  // Limitamos el delta para evitar saltos bruscos
   var delta = Math.min(clock.getDelta(), 0.05);
 
-  // PAUSA- solo se actualiza la camara orbital; rata, personas y animaciones
-  // permanecen congeladas hasta volver a pulsar P.
+  // pausa
   if (juego_pausado) {
     cameraControls.update();
     return;
   }
 
-  // 3- movimiento y camara en tercera persona
-  // Copiado y pegado del movimiento de update() en s3-cam2.js.
   if (rata === null)
     return;
 
-  // 10- MENU- todavia no ha empezado la partida: solo el fondo animado.
+  // menu
   if (!partida_iniciada) {
     animarMenu(delta);
     return;
   }
 
-  // FIN- la rata cae y todo lo demas se queda quieto; solo siguen la camara y los
-  // gestos de ataque.
+  // fin de la partida: solo se mueven la camara y los gestos
   if (juego_terminado) {
     if (mixer !== null) mixer.update(delta);
     for (var i = 0; i < personas.length; i++)
       personas[i].mixer.update(delta);
     for (var j = 0; j < perseguidores.length; j++)
-      if (perseguidores[j].mixer !== null) perseguidores[j].mixer.update(delta);
+      perseguidores[j].mixer.update(delta);
     if (camara_orbital)
       cameraControls.update();
     else
@@ -3105,11 +2867,10 @@ function update()
     return;
   }
 
-  // El agua de la fuente gira despacio para que parezca que se mueve.
   if (agua_fuente !== null)
     agua_fuente.rotation.z += 0.2 * delta;
 
-  // 10- TIEMPO LIMITE- empieza a correr cuando despiertan gatos y perros.
+  // tiempo limite
   tiempo_partida += delta;
   if (aviso_bonus > 0)
     aviso_bonus -= delta;
@@ -3127,7 +2888,7 @@ function update()
     }
   }
 
-  // 7- escondites: hay que saber si la rata esta a salvo antes de mover a los demas.
+  // 7- escondites
   actualizarEscondites(delta);
 
   // 5- personas y 8- perseguidores
@@ -3139,8 +2900,6 @@ function update()
     actualizarPerseguidor(perseguidores[i], delta);
   }
 
-  // Si una persona o un gato acaban de terminar la partida, no seguimos con este
-  // frame: si no, la animacion de muerte quedaria pisada por la de Idle.
   if (juego_terminado) {
     actualizarHUD();
     return;
@@ -3149,7 +2908,7 @@ function update()
   // 6- quesos
   actualizarQuesos(delta);
 
-  // Durante el ajuste, las teclas tunean la camara en vez de mover la rata.
+  // 3- movimiento
   if (modo_tunear_camara) {
     tunearCamara();
   } else {
@@ -3160,22 +2919,19 @@ function update()
   // Calcular el vector de direccion de vista
   velocity.set(Math.sin(angulo), 0, Math.cos(angulo));
 
-  // DASH- la velocidad depende de la energia que quede.
+  // dash
   var speed = actualizarDash(delta);
   var moviendo = false;
 
   if (!modo_tunear_camara && (controls.moveForward || controls.moveBackward)) {
-    // 4- colisiones
-    // Copiado y pegado de update() en s3-colisiones.js. Para ir hacia atras
-    // lanzamos el rayo en sentido contrario.
+    // 4- colisiones (s3-colisiones.js)
     var direccion = velocity.clone();
+    var margen = 0.6;
     if (controls.moveBackward && !controls.moveForward) {
       direccion.negate();
       speed = controls.speed;   // hacia atras siempre despacio
+      margen = 1.0;
     }
-
-    // Hacia delante se para cuando el hocico toca; hacia atras hay que dejar sitio a la cola.
-    var margen = (controls.moveBackward && !controls.moveForward) ? 1.0 : 0.6;
 
     // Si no hay nada delante, permitir el movimiento
     if (caminoLibreRata(direccion, speed + margen)) {
@@ -3184,12 +2940,11 @@ function update()
     }
   }
 
-  // FINAL- salto y plataformas: altura de la rata (gravedad, aterrizaje, bordes).
+  // salto y plataformas
   actualizarAlturaRata(delta);
   rata_en_plataforma = en_suelo && pos_rata.y > 0.25;
 
-  // Animacion segun lo que hace la rata (ej-mixamo.js cambia de clip con teclas,
-  // aqui cambia sola segun el estado).
+  // animacion de la rata
   if (!en_suelo)
     cambiarAnimacionRata('Jump');
   else if (moviendo && dash_activo)
@@ -3199,8 +2954,7 @@ function update()
   else
     cambiarAnimacionRata('Idle');
 
-  // En la alcantarilla la rata baja por la rejilla y en el arbol sube por el tronco
-  // (solo el dibujo; pos_rata no cambia).
+  // en la alcantarilla baja y en el arbol sube
   rata.position.copy(pos_rata);
   if (rata_escondida)
     rata.position.y -= profundidad_escondite;
@@ -3210,7 +2964,7 @@ function update()
 
   actualizarHUD();
 
-  // DEBUG- actualizamos solamente la camara que esta activa.
+  // camara activa
   if (camara_orbital) {
     cameraControls.update();
   } else {
@@ -3220,14 +2974,15 @@ function update()
   if (mixer !== null) mixer.update(delta);
 }
 
+// minimapa: radar o mapa completo
 function updateCameraTop()
 {
-  // En el menu se ve siempre la plaza entera.
-  var radar = modo_radar && partida_iniciada;
+  var radar = modo_radar && partida_iniciada;   // en el menu, mapa completo
 
-  // El tamano del volumen ortografico decide cuanto abarca el mapa (tema 3, matriz
-  // ortografica). Solo se recalcula la proyeccion cuando cambia el modo.
-  var alcance = radar ? alcance_radar : alcance_hud;
+  var alcance = alcance_hud;
+  if (radar)
+    alcance = alcance_radar;
+  // tamano de la camara ortografica (tema 3)
   if (alcance !== alcance_mapa_actual) {
     cameraTop.left = -alcance / 2;
     cameraTop.right = alcance / 2;
@@ -3237,10 +2992,8 @@ function updateCameraTop()
     alcance_mapa_actual = alcance;
   }
 
+  // el radar gira con la rata (up = su direccion)
   if (radar) {
-    // Encima de la rata y con el vector up igual a su direccion: lo que tiene delante
-    // sale arriba en el mapa. Como la camara mira en vertical, up tiene que estar en
-    // el plano horizontal (pres_s3, ejercicio de la vista superior).
     cameraTop.position.set(pos_rata.x, 60, pos_rata.z);
     cameraTop.up.set(Math.sin(angulo), 0, Math.cos(angulo));
     objetivo_camera_top.set(pos_rata.x, 0, pos_rata.z);
@@ -3262,7 +3015,7 @@ function render()
   var radar = updateCameraTop();
   stats.update();
 
-  // vista 3d perspectiva (el mapa de sombras se calcula aqui, una vez por frame)
+  // vista 3d perspectiva
   renderer.shadowMap.needsUpdate = true;
   renderer.autoClear = false;
   renderer.setScissorTest(false);
@@ -3271,8 +3024,7 @@ function render()
   renderer.clear();
   renderer.render(scene, camera);
 
-  // vista de arriba (HUD) en la esquina inferior derecha, copiada de s3-cam2.js.
-  // Algo mas grande que antes para poder orientarse.
+  // vista de arriba (HUD) (s3-cam2.js)
   var ds = Math.floor(Math.min(window.innerHeight, window.innerWidth) / 3.2);
   var x = window.innerWidth - ds - 10;
   var y = 10;
@@ -3281,12 +3033,11 @@ function render()
   renderer.setScissorTest(true);
   renderer.setClearColor(new THREE.Color(0x202020));
   renderer.clear();
-  // Los marcadores estan en la capa 1, que solo ve esta camara.
   actualizarMarcadores(radar);
   renderer.render(scene, cameraTop);
   renderer.setScissorTest(false);
 
-  // Marco y leyenda del minimapa: solo se recolocan si cambia el tamano de la ventana.
+  // marco del minimapa
   if (ds !== lado_mapa_actual) {
     var marco = document.getElementById('marco_mapa');
     marco.style.width = ds + 'px';
@@ -3294,8 +3045,12 @@ function render()
     document.getElementById('leyenda').style.bottom = (ds + 16) + 'px';
     lado_mapa_actual = ds;
   }
+  // texto del minimapa
+  var texto = 'MAPA (M cambia)';
+  if (radar)
+    texto = 'RADAR (M cambia)';
   var cercano = distanciaQuesoMasCercano();
-  document.getElementById('texto_mapa').textContent =
-    (radar ? 'RADAR' : 'MAPA') + ' (M cambia)' +
-    (cercano < Infinity ? ' · queso a ' + Math.round(cercano) + ' m' : '');
+  if (cercano < Infinity)
+    texto += ' · queso a ' + Math.round(cercano) + ' m';
+  document.getElementById('texto_mapa').textContent = texto;
 }
