@@ -38,12 +38,12 @@ const energia_minima_dash = 0.25;
 var energia_dash = 1;   // de 0 a 1
 var dash_activo = false;
 
-// inclinacion al girar (Tron)
+// inclinacion al girar
 const inclinacion_maxima = THREE.MathUtils.degToRad(12);
 const rapidez_inclinacion = 10;
 let inclinacion_actual = 0;
 
-// salto (Tron)
+// salto
 const gravedad = -18;
 const impulso_salto = 6.3;   // sube hasta 1.1
 let velocidad_vertical = 0;
@@ -61,7 +61,7 @@ var grupo_plataformas = null;
 var bloqueo_grandes = null;   // solo para personas y perros
 var rata_en_plataforma = false;
 
-// ajuste de la camara (Tron)
+// ajuste de la camara
 var modo_tunear_camara = false;
 var distancia_camara = 3.5;
 var altura_camara = 1.5;
@@ -74,7 +74,7 @@ const adelanto_mirada_escondite = 3;
 const fov_normal = 50;
 const fov_escondite = 72;
 
-// camara con muelle (Tron)
+// camara con muelle
 const rigidez_camara = 50;
 const amortiguacion_camara = 14;
 const velocidad_camara = new THREE.Vector3();
@@ -137,7 +137,7 @@ const frames_maximos_acercando = 240;
 const distancia_atrapar_persona = 1.2;
 var personas = [];
 
-// rayos de la IA (Tron)
+// rayos de la IA
 const raycaster_ia = new THREE.Raycaster();
 const hacia_rata_tmp = new THREE.Vector3();
 const origen_rayo_ia = new THREE.Vector3();
@@ -245,7 +245,7 @@ const clave_nombre = 'rata_plaza_nombre';
 const max_records = 10;
 var modo_ligero = false;   // L: sin sombras ni brillos
 
-// Event listeners para controles (s3-cam2.js)
+// Event listeners para controles
 document.addEventListener('keydown', (event) => {
   // en el menu se escribe el nombre
   if (!partida_iniciada)
@@ -372,7 +372,7 @@ document.addEventListener('keyup', (event) => {
   }
 });
 
-// salto (Tron)
+// salto
 function saltar()
 {
   if (rata === null || !en_suelo || juego_pausado || juego_terminado || rata_escondida || rata_en_arbol)
@@ -402,7 +402,7 @@ function caminoLibreRata(direccion, distancia)
   return true;
 }
 
-// altura del suelo con un rayo hacia abajo (detectarSuelo del Tron)
+// altura del suelo con un rayo hacia abajo
 function alturaSuelo(x, z, alturaActual, margen)
 {
   origen_rayo_suelo.set(x, alturaActual + margen, z);
@@ -415,7 +415,7 @@ function alturaSuelo(x, z, alturaActual, margen)
   return impactos[0].point.y;
 }
 
-// gravedad y aterrizaje (Tron)
+// gravedad y aterrizaje
 function actualizarAlturaRata(delta)
 {
   var alturaDebajo = alturaSuelo(pos_rata.x, pos_rata.z, pos_rata.y, altura_escalon_rata);
@@ -462,7 +462,7 @@ function actualizarDash(delta)
   return controls.speed;
 }
 
-// la rata se inclina al girar (Tron)
+// la rata se inclina al girar
 function actualizarInclinacion(delta)
 {
   let inclinacion_objetivo = 0;
@@ -491,7 +491,7 @@ function init()
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(new THREE.Color(0x000000));
   renderer.outputEncoding = THREE.sRGBEncoding;
-  // sombras (s5-luces.js)
+  // sombras
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   // el mapa de sombras se actualiza en render()
@@ -529,7 +529,7 @@ function init()
   camera = new THREE.PerspectiveCamera(50, aspectRatio, 0.1, 1000);
   camera.position.set(radio_plaza, 25, radio_plaza);
 
-  // camara cenital del minimapa (s3-cam2.js)
+  // camara cenital del minimapa
   cameraTop = new THREE.OrthographicCamera(
     -alcance_hud / 2,
     alcance_hud / 2,
@@ -559,7 +559,7 @@ function init()
   window.addEventListener('resize', updateAspectRatio);
 }
 
-// skybox: esfera con el cielo por dentro (Tron)
+// skybox: esfera con el cielo por dentro
 function crearSkybox()
 {
   var texturaSkybox = new THREE.TextureLoader().load('images/cielo.jpg');
@@ -575,7 +575,7 @@ function crearSkybox()
   scene.add(skybox);
 }
 
-// textura de las fachadas (s5-texturas.js)
+// textura de las fachadas
 function ponerTexturaFachadas(fachadas)
 {
   var cargador = new THREE.TextureLoader();
@@ -629,7 +629,7 @@ function loadScene()
   // suelo
   var geometriaSuelo = new THREE.CircleGeometry(radio_plaza, 128);
 
-  // textura del suelo: una baldosa cada 4 (s5-texturas.js)
+  // textura del suelo: una baldosa cada 4
   var repeticiones = radio_plaza * 2 / 4;
   var texturaSuelo = new THREE.TextureLoader().load(
     'images/cobblestone_pavement_diff_1k.jpg'
@@ -712,7 +712,7 @@ function loadScene()
   bordillo.receiveShadow = true;
   scene.add(bordillo);
 
-  // fachadas: 30 edificios en circulo (como la pared del Tron)
+  // fachadas: 30 edificios en circulo
   var fachadas = new THREE.Group();
   var cantidadTramos = 30;
   var pasoAngular = Math.PI * 2 / cantidadTramos;
@@ -724,7 +724,7 @@ function loadScene()
     var altoFachada = 10 + (tramo * 7) % 11;   // alturas distintas
     var fondoFachada = 9;
 
-    // un material por cara, la foto solo mirando a la plaza (s5-texturas.js)
+    // un material por cara, la foto solo mirando a la plaza
     var colorPared = coloresFachada[tramo % coloresFachada.length];
     var materialPared = new THREE.MeshLambertMaterial({ color: colorPared });
     var materialFrente = new THREE.MeshPhongMaterial({ color: colorPared, shininess: 5 });
@@ -745,7 +745,7 @@ function loadScene()
   scene.add(fachadas);
   ponerTexturaFachadas(fachadas);
 
-  // limite invisible de la plaza (Tron)
+  // limite invisible de la plaza
   var altoLimite = 10;
   var limitePlaza = new THREE.Mesh(
     new THREE.CylinderGeometry(radio_plaza - 0.3, radio_plaza - 0.3, altoLimite, 64, 1, true),
@@ -859,7 +859,7 @@ function compilarShaders()
   renderer.compile(scene, camera);
 }
 
-// cilindro invisible para las colisiones (Tron)
+// cilindro invisible para las colisiones
 function crearColisionador(radio, alto)
 {
   var colisionador = new THREE.Mesh(
@@ -1256,7 +1256,7 @@ function crearEscondite(x, z)
     alcantarilla.add(barra);
   }
 
-  // anillo brillante (aditivo, como los halos del Tron)
+  // anillo brillante (aditivo)
   var anillo = new THREE.Mesh(
     new THREE.RingGeometry(radio_escondite + 0.05, radio_escondite + 0.4, 48),
     new THREE.MeshBasicMaterial({
@@ -1693,7 +1693,7 @@ function distanciaXZ(punto, x, z)
 }
 
 // 8- perseguidores (gatos y perros)
-// tinte (colorearMotoIA del Tron)
+// tinte
 function tenirModelo(modelo, color)
 {
   var tinte = new THREE.Color(color);
@@ -1766,7 +1766,7 @@ function nuevoPerseguidor(tipo, modelo, anguloInicial, mixerAgente, acciones)
   return agente;
 }
 
-// carga un gato o un perro (como loadLightCycle del Tron)
+// carga un gato o un perro
 function loadPerseguidor(nombreTipo, indice, anguloInicial)
 {
   var tipo = tipos_perseguidor[nombreTipo];
@@ -1891,7 +1891,7 @@ function actualizarPerseguidor(agente, delta)
         agente.angulo += diferencia;
         agente.velocity.set(Math.sin(agente.angulo), 0, Math.cos(agente.angulo));
 
-        // si hay algo delante, lo rodea (sensores del Tron)
+        // si hay algo delante, lo rodea
         if (distanciaLibre(agente, agente.velocity, agente.lista_obstaculos) < 1.5) {
           direccion_izquierda_ia.set(Math.sin(agente.angulo + Math.PI / 4), 0, Math.cos(agente.angulo + Math.PI / 4));
           direccion_derecha_ia.set(Math.sin(agente.angulo - Math.PI / 4), 0, Math.cos(agente.angulo - Math.PI / 4));
@@ -1965,7 +1965,7 @@ function actualizarPerseguidor(agente, delta)
   agente.mixer.update(delta);
 }
 
-// 2- rata (loadLightCycle del Tron)
+// 2- rata
 function loadRata()
 {
   var loader = new THREE.GLTFLoader();
@@ -1985,7 +1985,7 @@ function loadRata()
       scene.add(rata);
       compilarShaders();
 
-      // animaciones (ej-mixamo.js)
+      // animaciones
       mixer = new THREE.AnimationMixer(rata);
       gltf.animations.forEach(function(clip) {
         var nombre = clip.name.split('_').pop();   // "Rat_Idle" -> "Idle"
@@ -2011,7 +2011,7 @@ function loadRata()
   );
 }
 
-// cambia de animacion (ej-mixamo.js)
+// cambia de animacion
 function cambiarAnimacionRata(nombre)
 {
   if (accion_actual === acciones_rata[nombre] || acciones_rata[nombre] === undefined)
@@ -2075,7 +2075,7 @@ function loadPersona(fichero, anguloInicial)
         marcador: crearMarcador(color_marcador.persona, 1.7)
       };
 
-      // escala segun su altura (ej-loader.js)
+      // escala segun su altura
       var box = new THREE.Box3().setFromObject(persona.modelo);
       var size = new THREE.Vector3();
       box.getSize(size);
@@ -2115,7 +2115,7 @@ function loadPersona(fichero, anguloInicial)
   );
 }
 
-// distancia al primer obstaculo (distanciaLibreIA del Tron)
+// distancia al primer obstaculo
 function distanciaLibre(agente, direccion, lista)
 {
   origen_rayo_ia.copy(agente.pos);
@@ -2177,7 +2177,7 @@ function distanciaLibreAncha(agente, direccion, lista)
   return minima;
 }
 
-// paseo al azar esquivando cosas (IA del Tron)
+// paseo al azar esquivando cosas
 function pasear(agente, lista, velocidad, giro)
 {
   agente.velocity.set(Math.sin(agente.angulo), 0, Math.cos(agente.angulo));
@@ -2690,7 +2690,7 @@ function updateAspectRatio()
   camera.updateProjectionMatrix();
 }
 
-// muelle amortiguado (Tron)
+// muelle amortiguado
 function actualizarResorte(actual, velocidadActual, objetivo, delta)
 {
   aceleracion_camara
@@ -2703,7 +2703,7 @@ function actualizarResorte(actual, velocidadActual, objetivo, delta)
   actual.addScaledVector(velocidadActual, delta);
 }
 
-// camara en tercera persona (Tron); en un escondite sube y se aleja
+// camara en tercera persona; en un escondite sube y se aleja
 function updateCamera(delta)
 {
   var vigia = rataOculta();
@@ -2758,7 +2758,7 @@ function updateCamera(delta)
   camera.lookAt(mirada_actual_camara);
 }
 
-// C: camara orbital (Tron)
+// C: camara orbital
 function cambiarCamara()
 {
   camara_orbital = !camara_orbital;
@@ -2777,7 +2777,7 @@ function cambiarCamara()
   console.log(camara_orbital ? 'Camara orbital' : 'Camara en tercera persona');
 }
 
-// P: pausa (Tron)
+// P: pausa
 function cambiarPausa()
 {
   juego_pausado = !juego_pausado;
@@ -2794,7 +2794,7 @@ function cambiarPausa()
   console.log(juego_pausado ? 'Juego pausado' : 'Juego reanudado');
 }
 
-// ajuste de la camara con las teclas (Tron)
+// ajuste de la camara con las teclas
 function tunearCamara()
 {
   var cambio = false;
@@ -2926,7 +2926,7 @@ function update()
   var moviendo = false;
 
   if (!modo_tunear_camara && (controls.moveForward || controls.moveBackward)) {
-    // 4- colisiones (s3-colisiones.js)
+    // 4- colisiones
     var direccion = velocity.clone();
     var margen = 0.6;
     if (controls.moveBackward && !controls.moveForward) {
@@ -3026,7 +3026,7 @@ function render()
   renderer.clear();
   renderer.render(scene, camera);
 
-  // vista de arriba (HUD) (s3-cam2.js)
+  // vista de arriba (HUD)
   var ds = Math.floor(Math.min(window.innerHeight, window.innerWidth) / 3.2);
   var x = window.innerWidth - ds - 10;
   var y = 10;
