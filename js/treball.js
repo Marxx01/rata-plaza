@@ -515,7 +515,10 @@ function init()
   luzDireccional.shadow.camera.top = radio_acera;
   luzDireccional.shadow.camera.bottom = -radio_acera;
   luzDireccional.shadow.camera.near = 1;
-  luzDireccional.shadow.camera.far = 250;
+  luzDireccional.shadow.camera.far = 160;
+  // bias contra el acne (rayas de auto-sombra en el cesped y el escalon)
+  luzDireccional.shadow.bias = -0.0005;
+  luzDireccional.shadow.normalBias = 0.03;
   scene.add(luzDireccional);
 
   // las luces tambien en el minimapa (capa 1)
